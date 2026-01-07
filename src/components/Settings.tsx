@@ -4,7 +4,7 @@ import { useGoogleAuthContext } from '../contexts/GoogleAuthContext';
 
 export function Settings() {
     const { settings, loading, saveSettings } = useSmtpSettings();
-    const { settings: appSettings, resetCameraPermission } = useAppSettings();
+    const { settings: appSettings, resetCameraPermission, setCurrency } = useAppSettings();
     const {
         auth,
         isAuthenticated,
@@ -331,6 +331,48 @@ export function Settings() {
                         </div>
                     </div>
                 )}
+            </div>
+
+            {/* Currency Settings Card */}
+            <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
+                <h3 className="card-title" style={{ marginBottom: 'var(--space-lg)' }}>
+                    💰 Currency Settings
+                </h3>
+
+                <div className="form-group">
+                    <label className="form-label">Preferred Currency</label>
+                    <select
+                        className="form-select"
+                        value={appSettings.currency_code || 'USD'}
+                        onChange={async (e) => {
+                            const code = e.target.value;
+                            let locale = 'en-US';
+                            switch (code) {
+                                case 'IDR': locale = 'id-ID'; break;
+                                case 'EUR': locale = 'de-DE'; break;
+                                case 'GBP': locale = 'en-GB'; break;
+                                case 'JPY': locale = 'ja-JP'; break;
+                                case 'AUD': locale = 'en-AU'; break;
+                                case 'CAD': locale = 'en-CA'; break;
+                                default: locale = 'en-US';
+                            }
+                            await setCurrency(code, locale);
+                            setMessage({ type: 'success', text: `Currency updated to ${code}` });
+                        }}
+                        style={{
+                            background: 'var(--color-bg-secondary)',
+                            color: 'var(--color-text-primary)'
+                        }}
+                    >
+                        <option value="USD">USD ($) - US Dollar</option>
+                        <option value="IDR">IDR (Rp) - Indonesian Rupiah</option>
+                        <option value="EUR">EUR (€) - Euro</option>
+                        <option value="GBP">GBP (£) - British Pound</option>
+                        <option value="JPY">JPY (¥) - Japanese Yen</option>
+                        <option value="AUD">AUD ($) - Australian Dollar</option>
+                        <option value="CAD">CAD ($) - Canadian Dollar</option>
+                    </select>
+                </div>
             </div>
 
             {/* Camera Settings Card */}

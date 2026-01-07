@@ -26,7 +26,9 @@ export async function getDatabase(): Promise<Database> {
             CREATE TABLE IF NOT EXISTS app_settings (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 current_event_id INTEGER REFERENCES events(id),
-                camera_permission_granted INTEGER DEFAULT 0
+                camera_permission_granted INTEGER DEFAULT 0,
+                currency_code TEXT DEFAULT 'USD',
+                currency_locale TEXT DEFAULT 'en-US'
             )
         `);
 
@@ -94,6 +96,12 @@ export async function getDatabase(): Promise<Database> {
         // Add image_url column for product images
         try {
             await db.execute('ALTER TABLE products ADD COLUMN image_url TEXT');
+        } catch { /* Column might already exist */ }
+
+        // Add currency columns for existing DBs
+        try {
+            await db.execute('ALTER TABLE app_settings ADD COLUMN currency_code TEXT DEFAULT "USD"');
+            await db.execute('ALTER TABLE app_settings ADD COLUMN currency_locale TEXT DEFAULT "en-US"');
         } catch { /* Column might already exist */ }
     }
     return db;
@@ -601,22 +609,29 @@ export function useEvents() {
     return { events, loading, addEvent, updateEvent, deleteEvent, reload: loadEvents };
 }
 
-// App Settings hooks (camera permission, current event)
+// App Settings hooks (camera permission, current event, currency)
 export function useAppSettings() {
     const [settings, setSettings] = useState<AppSettings>({
         current_event_id: undefined,
-        camera_permission_granted: false
+        camera_permission_granted: false,
+        currency_code: 'USD',
+        currency_locale: 'en-US'
     });
     const [loading, setLoading] = useState(true);
 
     const loadSettings = useCallback(async () => {
         try {
             const database = await getDatabase();
+            // Initialize if empty using INSERT OR IGNORE
+            await database.execute('INSERT OR IGNORE INTO app_settings (id, currency_code, currency_locale) VALUES (1, "USD", "en-US")');
+
             const result = await database.select<any[]>('SELECT * FROM app_settings WHERE id = 1');
             if (result[0]) {
                 setSettings({
                     current_event_id: result[0].current_event_id || undefined,
-                    camera_permission_granted: !!result[0].camera_permission_granted
+                    camera_permission_granted: !!result[0].camera_permission_granted,
+                    currency_code: result[0].currency_code || 'USD',
+                    currency_locale: result[0].currency_locale || 'en-US'
                 });
             }
         } catch (error) {
@@ -633,7 +648,7 @@ export function useAppSettings() {
     const setCurrentEvent = async (eventId: number | null) => {
         const database = await getDatabase();
         await database.execute(
-            'INSERT OR REPLACE INTO app_settings (id, current_event_id, camera_permission_granted) VALUES (1, ?, (SELECT camera_permission_granted FROM app_settings WHERE id = 1))',
+            'UPDATE app_settings SET current_event_id = ? WHERE id = 1',
             [eventId]
         );
         await loadSettings();
@@ -642,7 +657,7 @@ export function useAppSettings() {
     const setCameraPermission = async (granted: boolean) => {
         const database = await getDatabase();
         await database.execute(
-            'INSERT OR REPLACE INTO app_settings (id, current_event_id, camera_permission_granted) VALUES (1, (SELECT current_event_id FROM app_settings WHERE id = 1), ?)',
+            'UPDATE app_settings SET camera_permission_granted = ? WHERE id = 1',
             [granted ? 1 : 0]
         );
         await loadSettings();
@@ -652,5 +667,44 @@ export function useAppSettings() {
         await setCameraPermission(false);
     };
 
-    return { settings, loading, setCurrentEvent, setCameraPermission, resetCameraPermission, reload: loadSettings };
+    const setCurrency = async (code: string, locale: string) => {
+        const database = await getDatabase();
+        await database.execute(
+            'UPDATE app_settings SET currency_code = ?, currency_locale = ? WHERE id = 1',
+            [code, locale]
+        );
+        await loadSettings();
+    };
+
+    return { settings, loading, setCurrentEvent, setCameraPermission, resetCameraPermission, setCurrency, reload: loadSettings };
+}
+
+// Hook for using currency formatting anywhere
+export function useCurrency() {
+    const { settings } = useAppSettings();
+
+    const formatCurrency = (amount: number) => {
+        // Fallback to USD if not loaded yet
+        const code = settings.currency_code || 'USD';
+        const locale = settings.currency_locale || 'en-US';
+
+        try {
+            return new Intl.NumberFormat(locale, {
+                style: 'currency',
+                currency: code
+            }).format(amount);
+        } catch (error) {
+            // Fallback if locale/currency combo is invalid
+            return new Intl.NumberFormat('en-US', {
+                style: 'currency',
+                currency: 'USD'
+            }).format(amount);
+        }
+    };
+
+    return {
+        formatCurrency,
+        currencyCode: settings.currency_code || 'USD',
+        currencyLocale: settings.currency_locale || 'en-US'
+    };
 }

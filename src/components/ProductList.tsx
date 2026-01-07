@@ -1,9 +1,10 @@
 import { useState, useRef } from 'react';
-import { useProducts } from '../hooks/useDatabase';
+import { useProducts, useCurrency } from '../hooks/useDatabase';
 import { Product } from '../types';
 
 export function ProductList() {
     const { products, loading, addProduct, updateProduct, deleteProduct } = useProducts();
+    const { formatCurrency } = useCurrency();
     const [showModal, setShowModal] = useState(false);
     const [editingProduct, setEditingProduct] = useState<Product | null>(null);
     const [formData, setFormData] = useState({ name: '', description: '', price: '', image_url: '' });
@@ -72,12 +73,7 @@ export function ProductList() {
         }
     };
 
-    const formatCurrency = (amount: number) => {
-        return new Intl.NumberFormat('en-US', {
-            style: 'currency',
-            currency: 'USD'
-        }).format(amount);
-    };
+
 
     const handleImageUrlChange = (url: string) => {
         setFormData({ ...formData, image_url: url });
