@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { invoke } from '@tauri-apps/api/core';
-import { usePreOrders, useSmtpSettings } from '../hooks/useDatabase';
+import { usePreOrders, useSmtpSettings, useCurrency } from '../hooks/useDatabase';
 import { useGoogleAuthContext } from '../contexts/GoogleAuthContext';
 import { PreOrder } from '../types';
 
@@ -10,6 +10,7 @@ export function ConfirmOrder() {
     const { confirmByCode } = usePreOrders();
     const { settings: smtpSettings } = useSmtpSettings();
     const { auth, isAuthenticated, getAccessToken } = useGoogleAuthContext();
+    const { formatCurrency } = useCurrency();
 
     const [code, setCode] = useState('');
     const [confirmedOrder, setConfirmedOrder] = useState<PreOrder | null>(null);
@@ -66,6 +67,10 @@ export function ConfirmOrder() {
                 scannerRef.current = null;
             }
 
+            setScannerActive(true);
+            // Give React a moment to render the div as visible
+            await new Promise(r => setTimeout(r, 100));
+
             scannerRef.current = new Html5Qrcode('qr-reader');
 
             await scannerRef.current.start(
@@ -86,9 +91,8 @@ export function ConfirmOrder() {
                     // QR code not found in frame - this is normal
                 }
             );
-
-            setScannerActive(true);
         } catch (err: any) {
+            setScannerActive(false);
             console.error('Failed to start scanner:', err);
             setScannerError(`Failed to start camera scanner: ${err.message || err}`);
         }
@@ -202,12 +206,7 @@ export function ConfirmOrder() {
         await handleConfirm(code);
     };
 
-    const formatCurrency = (amount: number) => {
-        return new Intl.NumberFormat('en-US', {
-            style: 'currency',
-            currency: 'USD'
-        }).format(amount);
-    };
+
 
     const resetForm = () => {
         setCode('');

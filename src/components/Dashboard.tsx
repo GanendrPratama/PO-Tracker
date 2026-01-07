@@ -1,25 +1,19 @@
 import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import QRCode from 'qrcode';
-import { useStats, usePreOrders, useSmtpSettings } from '../hooks/useDatabase';
+import { useStats, usePreOrders, useSmtpSettings, useCurrency } from '../hooks/useDatabase';
 import { useGoogleAuthContext } from '../contexts/GoogleAuthContext';
 
 export function Dashboard() {
     const { stats } = useStats();
-    const { orders, deleteOrder, updateConfirmationCode, getOrderItems } = usePreOrders(); // Updated destructuring
+    const { orders, deleteOrder, updateConfirmationCode, getOrderItems } = usePreOrders();
     const { settings: smtpSettings } = useSmtpSettings();
     const { auth, isAuthenticated, getAccessToken } = useGoogleAuthContext();
+    const { formatCurrency } = useCurrency();
 
     const [showCodes, setShowCodes] = useState(false);
     const [processingId, setProcessingId] = useState<number | null>(null);
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-
-    const formatCurrency = (amount: number) => {
-        return new Intl.NumberFormat('en-US', {
-            style: 'currency',
-            currency: 'USD'
-        }).format(amount);
-    };
 
     const formatDate = (dateStr: string | undefined) => {
         if (!dateStr) return '-';

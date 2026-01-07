@@ -47,6 +47,16 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
+      - name: Create .env file
+        shell: bash
+        run: |
+          touch .env
+          echo "VITE_GOOGLE_CLIENT_ID=${{ secrets.VITE_GOOGLE_CLIENT_ID }}" >> .env
+          echo "VITE_GOOGLE_CLIENT_SECRET=${{ secrets.VITE_GOOGLE_CLIENT_SECRET }}" >> .env
+          echo "VITE_API_URL=${{ secrets.VITE_API_URL }}" >> .env
+          # Add other secrets as needed
+          cat .env # Optional: Verify file was created (secrets will be masked)
+
       - name: Build the app
         uses: tauri-apps/tauri-action@v0
         env:

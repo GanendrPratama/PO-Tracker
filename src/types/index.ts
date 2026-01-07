@@ -80,6 +80,8 @@ export interface OrderItemInput {
 export interface AppSettings {
     current_event_id?: number;
     camera_permission_granted?: boolean;
+    currency_code?: string;   // e.g., 'USD', 'IDR'
+    currency_locale?: string; // e.g., 'en-US', 'id-ID'
 }
 
 // Google OAuth types

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import QRCode from 'qrcode';
 import { invoke } from '@tauri-apps/api/core';
-import { useProducts, usePreOrders, useSmtpSettings } from '../hooks/useDatabase';
+import { useProducts, usePreOrders, useSmtpSettings, useCurrency } from '../hooks/useDatabase';
 import { useGoogleAuthContext } from '../contexts/GoogleAuthContext';
 import { Product } from '../types';
 
@@ -15,6 +15,7 @@ export function OrderForm({ onOrderCreated }: OrderFormProps) {
     const { createOrder } = usePreOrders();
     const { settings: smtpSettings } = useSmtpSettings();
     const { auth, isAuthenticated, getAccessToken } = useGoogleAuthContext();
+    const { formatCurrency } = useCurrency();
 
     const [customerName, setCustomerName] = useState('');
     const [customerEmail, setCustomerEmail] = useState('');
@@ -48,13 +49,6 @@ export function OrderForm({ onOrderCreated }: OrderFormProps) {
             }
         });
         return total;
-    };
-
-    const formatCurrency = (amount: number) => {
-        return new Intl.NumberFormat('en-US', {
-            style: 'currency',
-            currency: 'USD'
-        }).format(amount);
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
