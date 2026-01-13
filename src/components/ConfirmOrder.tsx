@@ -20,12 +20,29 @@ export function ConfirmOrder() {
     const [scannerError, setScannerError] = useState('');
     const scannerRef = useRef<Html5Qrcode | null>(null);
     const scannerDivRef = useRef<HTMLDivElement>(null);
+    const scanTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
     // Cleanup scanner on unmount
     useEffect(() => {
         return () => {
+            if (scanTimeoutRef.current) {
+                clearTimeout(scanTimeoutRef.current);
+            }
             if (scannerRef.current) {
-                scannerRef.current.stop().catch(() => { });
+                // We wrap this in an async IIFE because cleanup function must be synchronous
+                (async () => {
+                    if (scannerRef.current) {
+                        try {
+                            if (scannerRef.current.isScanning) {
+                                await scannerRef.current.stop();
+                            }
+                            await scannerRef.current.clear();
+                        } catch (err) {
+                            console.error('Failed to cleanup scanner on unmount:', err);
+                        }
+                        scannerRef.current = null;
+                    }
+                })();
             }
         };
     }, []);
@@ -57,12 +74,26 @@ export function ConfirmOrder() {
         }
 
         try {
+            // Clear any existing timeout
+            if (scanTimeoutRef.current) {
+                clearTimeout(scanTimeoutRef.current);
+            }
+
+            // Set 60s timeout
+            scanTimeoutRef.current = setTimeout(() => {
+                stopScanner();
+                setScannerError('Scanner stopped due to inactivity (60s).');
+            }, 60000);
+
             // Clean up existing scanner if any
             if (scannerRef.current) {
                 try {
-                    await scannerRef.current.stop();
+                    if (scannerRef.current.isScanning) {
+                        await scannerRef.current.stop();
+                    }
+                    await scannerRef.current.clear();
                 } catch {
-                    // Ignore
+                    // Ignore cleanup errors
                 }
                 scannerRef.current = null;
             }
@@ -81,11 +112,12 @@ export function ConfirmOrder() {
                 },
                 async (decodedText) => {
                     // QR code scanned successfully
-                    setCode(decodedText.toUpperCase());
+                    const scannedCode = decodedText.toUpperCase();
+                    setCode(scannedCode);
                     await stopScanner();
 
                     // Auto-submit
-                    handleConfirm(decodedText.toUpperCase());
+                    handleConfirm(scannedCode);
                 },
                 () => {
                     // QR code not found in frame - this is normal
@@ -99,12 +131,21 @@ export function ConfirmOrder() {
     };
 
     const stopScanner = async () => {
+        if (scanTimeoutRef.current) {
+            clearTimeout(scanTimeoutRef.current);
+            scanTimeoutRef.current = null;
+        }
+
         if (scannerRef.current) {
             try {
-                await scannerRef.current.stop();
+                if (scannerRef.current.isScanning) {
+                    await scannerRef.current.stop();
+                }
+                await scannerRef.current.clear();
             } catch (err) {
-                // Ignore errors when stopping
+                console.error('Failed to stop scanner:', err);
             }
+            scannerRef.current = null;
         }
         setScannerActive(false);
     };
