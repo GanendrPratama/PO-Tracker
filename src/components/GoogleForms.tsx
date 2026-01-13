@@ -37,6 +37,7 @@ export function GoogleForms() {
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
     const [creating, setCreating] = useState(false);
     const [syncing, setSyncing] = useState(false);
+    const [scanning, setScanning] = useState(false);
     const [showFormEditor, setShowFormEditor] = useState(false);
     const [orderedProducts, setOrderedProducts] = useState<Product[]>([]);
 
@@ -125,6 +126,51 @@ export function GoogleForms() {
             setMessage({ type: 'error', text: `Failed to create form: ${error}` });
         } finally {
             setCreating(false);
+        }
+    };
+
+    const handleScanDrive = async () => {
+        const accessToken = getAccessToken();
+        if (!accessToken) {
+            setMessage({ type: 'error', text: 'Please sign in to Google first.' });
+            return;
+        }
+
+        setScanning(true);
+        try {
+            setMessage({ type: 'success', text: 'Scanning "po-tracker" folder in Drive...' });
+
+            interface ScannedForm {
+                form_id: string;
+                name: string;
+                url: string;
+                responder_url: string;
+            }
+
+            const scannedForms: ScannedForm[] = await invoke('scan_drive_forms', { accessToken });
+
+            let newCount = 0;
+            for (const form of scannedForms) {
+                // Check if already exists locally
+                const exists = forms.some(f => f.form_id === form.form_id);
+                if (!exists) {
+                    await saveForm(form.form_id, form.url, form.responder_url, form.name);
+                    newCount++;
+                }
+            }
+
+            if (newCount > 0) {
+                setMessage({ type: 'success', text: `Found and imported ${newCount} form(s) from Drive!` });
+            } else if (scannedForms.length === 0) {
+                setMessage({ type: 'error', text: 'No forms found in "po-tracker" folder.' });
+            } else {
+                setMessage({ type: 'success', text: 'All forms in Drive are already synced.' });
+            }
+        } catch (error) {
+            console.error('Failed to scan Drive:', error);
+            setMessage({ type: 'error', text: `Failed to scan Drive: ${error}` });
+        } finally {
+            setScanning(false);
         }
     };
 
@@ -461,24 +507,36 @@ export function GoogleForms() {
                 <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
                     <div className="card-header">
                         <h3 className="card-title">📝 Create Pre-Order Form</h3>
-                        <button
-                            className="btn btn-secondary"
-                            onClick={() => setShowFormEditor(true)}
-                            disabled={products.length === 0}
-                        >
-                            ✏️ Edit Layout
-                        </button>
+                        <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
+                            <button
+                                className="btn btn-secondary"
+                                onClick={() => setShowFormEditor(true)}
+                                disabled={products.length === 0}
+                            >
+                                ✏️ Edit Layout
+                            </button>
+                        </div>
                     </div>
                     <p style={{ color: 'var(--color-text-secondary)', marginBottom: 'var(--space-lg)' }}>
-                        Create a new Google Form with your {products.length} product(s). Customers can fill it out, and responses will be synced as pre-orders.
+                        Create a new Google Form with your {products.length} product(s).
+                        Forms are automatically organized in a <strong>'po-tracker'</strong> folder in your Google Drive.
                     </p>
-                    <button
-                        className="btn btn-primary"
-                        onClick={createPreOrderForm}
-                        disabled={creating || products.length === 0}
-                    >
-                        {creating ? '⏳ Creating...' : '➕ Create New Form'}
-                    </button>
+                    <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
+                        <button
+                            className="btn btn-primary"
+                            onClick={createPreOrderForm}
+                            disabled={creating || products.length === 0}
+                        >
+                            {creating ? '⏳ Creating...' : '➕ Create New Form'}
+                        </button>
+                        <button
+                            className="btn btn-secondary"
+                            onClick={handleScanDrive}
+                            disabled={scanning}
+                        >
+                            {scanning ? '⏳ Scanning...' : '📂 Scan Drive for Forms'}
+                        </button>
+                    </div>
                 </div>
             )}
 

@@ -116,6 +116,29 @@ pub struct Question {
     pub question_id: String,
 }
 
+// Drive API structs
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DriveFile {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "mimeType")]
+    pub mime_type: String,
+    pub parents: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DriveFileList {
+    pub files: Vec<DriveFile>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ScannedForm {
+    pub form_id: String,
+    pub name: String,
+    pub url: String,
+    pub responder_url: String,
+}
+
 // Generate unique confirmation code
 #[tauri::command]
 fn generate_confirmation_code() -> String {
@@ -240,6 +263,7 @@ async fn start_oauth_flow(client_id: String) -> Result<serde_json::Value, String
         "https://www.googleapis.com/auth/forms.body",
         "https://www.googleapis.com/auth/forms.responses.readonly",
         "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/drive",
     ].join(" ");
     
     let auth_url = format!(
@@ -372,6 +396,7 @@ fn get_google_auth_url(client_id: String, redirect_uri: String) -> String {
         "https://www.googleapis.com/auth/forms.body",
         "https://www.googleapis.com/auth/forms.responses.readonly",
         "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/drive",
     ].join(" ");
     
     format!(
@@ -475,7 +500,109 @@ async fn get_google_user_info(access_token: String) -> Result<GoogleUserInfo, St
         .map_err(|e| format!("Failed to parse user info: {}", e))
 }
 
-// Create a Google Form
+
+
+// Helper: Find folder by name
+async fn find_folder(client: &Client, access_token: &str, name: &str) -> Result<Option<String>, String> {
+    let query = format!(
+        "mimeType='application/vnd.google-apps.folder' and name='{}' and trashed=false",
+        name
+    );
+    
+    let response = client
+        .get("https://www.googleapis.com/drive/v3/files")
+        .query(&[("q", query.as_str())])
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to search folder: {}", e))?;
+        
+    if !response.status().is_success() {
+        return Err(format!("Drive API error: {}", response.status()));
+    }
+    
+    let list: DriveFileList = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse file list: {}", e))?;
+        
+    Ok(list.files.first().map(|f| f.id.clone()))
+}
+
+// Helper: Create folder
+async fn create_folder(client: &Client, access_token: &str, name: &str) -> Result<String, String> {
+    let body = serde_json::json!({
+        "name": name,
+        "mimeType": "application/vnd.google-apps.folder"
+    });
+    
+    let response = client
+        .post("https://www.googleapis.com/drive/v3/files")
+        .bearer_auth(access_token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to create folder: {}", e))?;
+        
+    if !response.status().is_success() {
+        return Err(format!("Drive API create error: {}", response.status()));
+    }
+    
+    let file: DriveFile = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse created folder: {}", e))?;
+        
+    Ok(file.id)
+}
+
+// Helper: Move file to folder
+async fn move_file_to_folder(
+    client: &Client, 
+    access_token: &str, 
+    file_id: &str, 
+    folder_id: &str
+) -> Result<(), String> {
+    // First get current parents to remove them
+    let response = client
+        .get(format!("https://www.googleapis.com/drive/v3/files/{}", file_id))
+        .query(&[("fields", "parents")])
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to get file parents: {}", e))?;
+        
+    let current_parents = if response.status().is_success() {
+        let file: DriveFile = response.json().await.unwrap_or(DriveFile { 
+            id: file_id.to_string(), 
+            name: "".to_string(), 
+            mime_type: "".to_string(), 
+            parents: None 
+        });
+        file.parents.unwrap_or_default().join(",")
+    } else {
+        "".to_string()
+    };
+    
+    // Update parents
+    let response = client
+        .patch(format!("https://www.googleapis.com/drive/v3/files/{}", file_id))
+        .query(&[
+            ("addParents", folder_id), 
+            ("removeParents", &current_parents)
+        ])
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to move file: {}", e))?;
+        
+    if !response.status().is_success() {
+        return Err(format!("Failed to move file to folder: {}", response.status()));
+    }
+    
+    Ok(())
+}
+
 #[tauri::command]
 async fn create_google_form(
     access_token: String,
@@ -483,6 +610,7 @@ async fn create_google_form(
 ) -> Result<GoogleFormResponse, String> {
     let client = Client::new();
     
+    // 1. Create the form first (standard API)
     let body = serde_json::json!({
         "info": {
             "title": title
@@ -498,14 +626,77 @@ async fn create_google_form(
         .map_err(|e| format!("Failed to create form: {}", e))?;
     
     if !response.status().is_success() {
-        let error_text = response.text().await.unwrap_or_default();
+         let error_text = response.text().await.unwrap_or_default();
         return Err(format!("Failed to create form: {}", error_text));
     }
     
-    response
-        .json::<GoogleFormResponse>()
+    let form: GoogleFormResponse = response
+        .json()
         .await
-        .map_err(|e| format!("Failed to parse form response: {}", e))
+        .map_err(|e| format!("Failed to parse form response: {}", e))?;
+        
+    // 2. Ensure "po-tracker" folder exists
+    let folder_id = match find_folder(&client, &access_token, "po-tracker").await? {
+        Some(id) => id,
+        None => create_folder(&client, &access_token, "po-tracker").await?
+    };
+    
+    // 3. Move form to folder
+    // Note: Forms API creates file in root. drive.file scope allows access to files created by app.
+    // drive scope (which we added) allows full access, so we can move it.
+    if let Err(e) = move_file_to_folder(&client, &access_token, &form.form_id, &folder_id).await {
+        println!("Warning: Failed to organize form into folder: {}", e);
+        // We don't fail the whole request since the form *was* created
+    }
+    
+    Ok(form)
+}
+
+#[tauri::command]
+async fn scan_drive_forms(access_token: String) -> Result<Vec<ScannedForm>, String> {
+    let client = Client::new();
+    
+    // 1. Find folder
+    let folder_id = find_folder(&client, &access_token, "po-tracker")
+        .await?
+        .ok_or("Folder 'po-tracker' not found".to_string())?;
+        
+    // 2. List forms in folder
+    let query = format!(
+        "'{}' in parents and mimeType='application/vnd.google-apps.form' and trashed=false",
+        folder_id
+    );
+    
+    let response = client
+        .get("https://www.googleapis.com/drive/v3/files")
+        .query(&[("q", query.as_str())])
+        .bearer_auth(&access_token)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to list files: {}", e))?;
+        
+    if !response.status().is_success() {
+        return Err(format!("Drive API list error: {}", response.status()));
+    }
+    
+    let list: DriveFileList = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse file list: {}", e))?;
+        
+    // 3. Convert to ScannedForm
+    // We only have ID and Name from Drive API. We construct URLs manually.
+    let mut forms = Vec::new();
+    for file in list.files {
+        forms.push(ScannedForm {
+            form_id: file.id.clone(),
+            name: file.name,
+            url: format!("https://docs.google.com/forms/d/{}/edit", file.id),
+            responder_url: format!("https://docs.google.com/forms/d/{}/viewform", file.id),
+        });
+    }
+    
+    Ok(forms)
 }
 
 // Add questions to a Google Form
@@ -676,6 +867,7 @@ pub fn run() {
             refresh_google_token,
             get_google_user_info,
             create_google_form,
+            scan_drive_forms,
             add_form_questions,
             get_form_responses,
             get_form_details
