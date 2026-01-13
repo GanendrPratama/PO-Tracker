@@ -14,6 +14,7 @@ jobs:
       matrix:
         platform: [macos-latest, ubuntu-22.04, windows-latest]
     runs-on: ${{ matrix.platform }}
+    environment: PO-Tracker
 
     steps:
       - name: Checkout repository
