@@ -1,13 +1,24 @@
 import { useState, useRef } from 'react';
-import { useProducts, useCurrency } from '../hooks/useDatabase';
+import { useProducts, useCurrency, useEvents } from '../hooks/useDatabase';
 import { Product } from '../types';
 
 export function ProductList() {
     const { products, loading, addProduct, updateProduct, deleteProduct } = useProducts();
+    const { events } = useEvents(); // Need events for dropdown
     const { formatCurrency } = useCurrency();
     const [showModal, setShowModal] = useState(false);
     const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-    const [formData, setFormData] = useState({ name: '', description: '', price: '', image_url: '' });
+    const [formData, setFormData] = useState<{
+        name: string;
+        description: string;
+        price: string;
+        currency_code: string;
+        image_url: string;
+        event_id: string;
+        prices: { currency_code: string; price: string }[];
+    }>({
+        name: '', description: '', price: '', currency_code: 'USD', image_url: '', event_id: '', prices: []
+    });
     const [imagePreview, setImagePreview] = useState<string | null>(null);
     const [dragOver, setDragOver] = useState(false);
     const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
@@ -18,20 +29,24 @@ export function ProductList() {
         e.preventDefault();
         const price = parseFloat(formData.price);
 
+        const prices = formData.prices
+            .filter(p => p.currency_code && p.price)
+            .map(p => ({ currency_code: p.currency_code, price: parseFloat(p.price) }));
+
+        const productData = {
+            name: formData.name,
+            description: formData.description,
+            price,
+            currency_code: formData.currency_code || 'USD',
+            image_url: formData.image_url || undefined,
+            event_id: formData.event_id ? parseInt(formData.event_id) : undefined,
+            prices
+        };
+
         if (editingProduct && editingProduct.id) {
-            await updateProduct(editingProduct.id, {
-                name: formData.name,
-                description: formData.description,
-                price,
-                image_url: formData.image_url || undefined
-            });
+            await updateProduct(editingProduct.id, productData);
         } else {
-            await addProduct({
-                name: formData.name,
-                description: formData.description,
-                price,
-                image_url: formData.image_url || undefined
-            });
+            await addProduct(productData);
         }
 
         closeModal();
@@ -39,7 +54,9 @@ export function ProductList() {
 
     const openAddModal = () => {
         setEditingProduct(null);
-        setFormData({ name: '', description: '', price: '', image_url: '' });
+        setFormData({
+            name: '', description: '', price: '', currency_code: 'USD', image_url: '', event_id: '', prices: []
+        });
         setImagePreview(null);
         setShowModal(true);
     };
@@ -50,7 +67,12 @@ export function ProductList() {
             name: product.name,
             description: product.description || '',
             price: product.price.toString(),
-            image_url: product.image_url || ''
+            currency_code: product.currency_code || 'USD',
+            image_url: product.image_url || '',
+            event_id: product.event_id ? product.event_id.toString() : '',
+            prices: product.prices
+                ? product.prices.map(p => ({ currency_code: p.currency_code, price: p.price.toString() }))
+                : []
         });
         setImagePreview(product.image_url || null);
         setShowModal(true);
@@ -59,7 +81,7 @@ export function ProductList() {
     const closeModal = () => {
         setShowModal(false);
         setEditingProduct(null);
-        setFormData({ name: '', description: '', price: '', image_url: '' });
+        setFormData({ name: '', description: '', price: '', currency_code: 'USD', image_url: '', event_id: '', prices: [] });
         setImagePreview(null);
     };
 
@@ -167,7 +189,12 @@ export function ProductList() {
                                     {product.description && (
                                         <p className="product-card-description">{product.description}</p>
                                     )}
-                                    <div className="product-card-price">{formatCurrency(product.price)}</div>
+                                    <div className="product-card-price">
+                                        {product.currency_code
+                                            ? new Intl.NumberFormat('en-US', { style: 'currency', currency: product.currency_code }).format(product.price)
+                                            : formatCurrency(product.price)
+                                        }
+                                    </div>
                                 </div>
                                 <div className="product-card-actions">
                                     <button
@@ -276,17 +303,94 @@ export function ProductList() {
                             </div>
 
                             <div className="form-group">
-                                <label className="form-label">Price *</label>
-                                <input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
+                                <label className="form-label">Event (Optional)</label>
+                                <select
                                     className="form-input"
-                                    value={formData.price}
-                                    onChange={(e) => setFormData({ ...formData, price: e.target.value })}
-                                    placeholder="0.00"
-                                    required
-                                />
+                                    value={formData.event_id}
+                                    onChange={(e) => setFormData({ ...formData, event_id: e.target.value })}
+                                >
+                                    <option value="">-- No Event --</option>
+                                    {events.map(e => (
+                                        <option key={e.id} value={e.id}>{e.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div className="form-group">
+                                <label className="form-label">Base Price *</label>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                    <input
+                                        type="text"
+                                        className="form-input"
+                                        style={{ width: '100px' }}
+                                        value={formData.currency_code}
+                                        onChange={(e) => setFormData({ ...formData, currency_code: e.target.value.toUpperCase() })}
+                                        placeholder="USD"
+                                        required
+                                    />
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        className="form-input"
+                                        value={formData.price}
+                                        onChange={(e) => setFormData({ ...formData, price: e.target.value })}
+                                        placeholder="0.00"
+                                        required
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="form-group">
+                                <label className="form-label">Additional Currencies</label>
+                                {formData.prices.map((p, idx) => (
+                                    <div key={idx} style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                                        <input
+                                            type="text"
+                                            placeholder="Currency (e.g. IDR)"
+                                            className="form-input"
+                                            style={{ width: '100px' }}
+                                            value={p.currency_code}
+                                            onChange={(e) => {
+                                                const newPrices = [...formData.prices];
+                                                newPrices[idx].currency_code = e.target.value.toUpperCase();
+                                                setFormData({ ...formData, prices: newPrices });
+                                            }}
+                                        />
+                                        <input
+                                            type="number"
+                                            placeholder="Price"
+                                            className="form-input"
+                                            value={p.price}
+                                            onChange={(e) => {
+                                                const newPrices = [...formData.prices];
+                                                newPrices[idx].price = e.target.value;
+                                                setFormData({ ...formData, prices: newPrices });
+                                            }}
+                                        />
+                                        <button
+                                            type="button"
+                                            className="btn btn-icon"
+                                            style={{ color: 'var(--color-error)' }}
+                                            onClick={() => {
+                                                const newPrices = formData.prices.filter((_, i) => i !== idx);
+                                                setFormData({ ...formData, prices: newPrices });
+                                            }}
+                                        >
+                                            ✕
+                                        </button>
+                                    </div>
+                                ))}
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={() => setFormData({
+                                        ...formData,
+                                        prices: [...formData.prices, { currency_code: '', price: '' }]
+                                    })}
+                                >
+                                    + Add Currency Price
+                                </button>
                             </div>
 
                             <div className="btn-group" style={{ justifyContent: 'flex-end', marginTop: 'var(--space-lg)' }}>

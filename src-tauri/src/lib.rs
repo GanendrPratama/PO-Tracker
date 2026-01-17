@@ -139,6 +139,14 @@ pub struct ScannedForm {
     pub responder_url: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ScannedProject {
+    pub folder_id: String,
+    pub name: String,
+    pub form: Option<ScannedForm>,
+    pub products_json: Option<String>,
+}
+
 // Generate unique confirmation code
 #[tauri::command]
 fn generate_confirmation_code() -> String {
@@ -603,14 +611,126 @@ async fn move_file_to_folder(
     Ok(())
 }
 
+// Helper: Trash/Delete file
+#[tauri::command]
+async fn delete_drive_file(access_token: String, file_id: String) -> Result<String, String> {
+    let client = Client::new();
+    
+    let body = serde_json::json!({
+        "trashed": true
+    });
+    
+    let response = client
+        .patch(format!("https://www.googleapis.com/drive/v3/files/{}", file_id))
+        .bearer_auth(access_token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to delete file: {}", e))?;
+        
+    if !response.status().is_success() {
+         let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("Drive API delete error: {}", error_text));
+    }
+    
+    Ok("File moved to trash".to_string())
+}
+
+// Helper: Create file (Simple/Multipart)
+async fn create_drive_file(
+    client: &Client,
+    access_token: &str,
+    name: &str,
+    content: &str,
+    mime_type: &str, // Content MimeType (e.g., application/json)
+    parent_id: Option<&str>,
+) -> Result<String, String> {
+    use reqwest::multipart;
+
+    // Metadata part
+    let mut parents = Vec::new();
+    if let Some(pid) = parent_id {
+        parents.push(pid);
+    }
+    
+    let metadata = serde_json::json!({
+        "name": name,
+        "parents": parents
+    });
+    
+    // Create multipart form
+    let form = multipart::Form::new()
+        .part("metadata", multipart::Part::text(metadata.to_string())
+            .mime_str("application/json; charset=UTF-8").unwrap())
+        .part("media", multipart::Part::text(content.to_string())
+            .mime_str(mime_type).unwrap());
+            
+    let response = client
+        .post("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart")
+        .bearer_auth(access_token)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to upload file: {}", e))?;
+        
+    if !response.status().is_success() {
+         let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("Drive API upload error: {}", error_text));
+    }
+    
+    let file: DriveFile = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse uploaded file: {}", e))?;
+        
+    Ok(file.id)
+}
+
+// Helper: Read file content
+#[tauri::command]
+async fn read_drive_file(access_token: String, file_id: String) -> Result<String, String> {
+    let client = Client::new();
+    
+    let response = client
+        .get(format!("https://www.googleapis.com/drive/v3/files/{}?alt=media", file_id))
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+        
+    if !response.status().is_success() {
+         let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("Drive API read error: {}", error_text));
+    }
+    
+    let content = response.text().await.map_err(|e| format!("Failed to get content: {}", e))?;
+    Ok(content)
+}
+
 #[tauri::command]
 async fn create_google_form(
     access_token: String,
     title: String,
+    products_json: Option<String>,
 ) -> Result<GoogleFormResponse, String> {
     let client = Client::new();
     
-    // 1. Create the form first (standard API)
+    // 1. Ensure "po-tracker" root folder exists
+    let root_folder_id = match find_folder(&client, &access_token, "po-tracker").await? {
+        Some(id) => id,
+        None => create_folder(&client, &access_token, "po-tracker").await?
+    };
+    
+    // 2. Create project subfolder
+    let project_folder_id = create_folder(&client, &access_token, &title).await?;
+    
+    // Move project folder into root (create_folder creates in root by default unless specified, but our helper doesn't support parent yet)
+    // To keep it simple, we reuse move_file_to_folder
+    if let Err(e) = move_file_to_folder(&client, &access_token, &project_folder_id, &root_folder_id).await {
+         println!("Warning: Failed to move project folder into root: {}", e);
+    }
+    
+    // 3. Create the form
     let body = serde_json::json!({
         "info": {
             "title": title
@@ -635,38 +755,36 @@ async fn create_google_form(
         .await
         .map_err(|e| format!("Failed to parse form response: {}", e))?;
         
-    // 2. Ensure "po-tracker" folder exists
-    let folder_id = match find_folder(&client, &access_token, "po-tracker").await? {
-        Some(id) => id,
-        None => create_folder(&client, &access_token, "po-tracker").await?
-    };
-    
-    // 3. Move form to folder
-    // Note: Forms API creates file in root. drive.file scope allows access to files created by app.
-    // drive scope (which we added) allows full access, so we can move it.
-    if let Err(e) = move_file_to_folder(&client, &access_token, &form.form_id, &folder_id).await {
+    // 4. Move form to project folder
+    if let Err(e) = move_file_to_folder(&client, &access_token, &form.form_id, &project_folder_id).await {
         println!("Warning: Failed to organize form into folder: {}", e);
-        // We don't fail the whole request since the form *was* created
+    }
+    
+    // 5. Upload products.json if provided
+    if let Some(json_content) = products_json {
+        if let Err(e) = create_drive_file(&client, &access_token, "products.json", &json_content, "application/json", Some(&project_folder_id)).await {
+            println!("Warning: Failed to upload products.json: {}", e);
+        }
     }
     
     Ok(form)
 }
 
 #[tauri::command]
-async fn scan_drive_forms(access_token: String) -> Result<Vec<ScannedForm>, String> {
+async fn scan_project_folders(access_token: String) -> Result<Vec<ScannedProject>, String> {
     let client = Client::new();
     
-    // 1. Find folder
-    // 1. Find folder
-    let folder_id = match find_folder(&client, &access_token, "po-tracker").await? {
+    // 1. Find root folder
+    let root_folder_id = match find_folder(&client, &access_token, "po-tracker").await? {
         Some(id) => id,
-        None => create_folder(&client, &access_token, "po-tracker").await?
+        None => return Ok(Vec::new()), // No root folder = no projects
     };
-        
-    // 2. List forms in folder
+    
+    // 2. List subfolders
+    // Query: parent = root and mimeType = folder
     let query = format!(
-        "'{}' in parents and mimeType='application/vnd.google-apps.form' and trashed=false",
-        folder_id
+        "'{}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false",
+        root_folder_id
     );
     
     let response = client
@@ -675,30 +793,69 @@ async fn scan_drive_forms(access_token: String) -> Result<Vec<ScannedForm>, Stri
         .bearer_auth(&access_token)
         .send()
         .await
-        .map_err(|e| format!("Failed to list files: {}", e))?;
+        .map_err(|e| format!("Failed to list folders: {}", e))?;
         
-    if !response.status().is_success() {
-        return Err(format!("Drive API list error: {}", response.status()));
+    let list: DriveFileList = response.json().await.map_err(|e| format!("Failed to parse folder list: {}", e))?;
+    
+    let mut projects = Vec::new();
+    
+    // 3. For each folder, find the form and products.json
+    for folder in list.files {
+        // Find form
+        let form_query = format!(
+            "'{}' in parents and mimeType='application/vnd.google-apps.form' and trashed=false",
+            folder.id
+        );
+        let form_resp = client.get("https://www.googleapis.com/drive/v3/files").query(&[("q", form_query.as_str())]).bearer_auth(&access_token).send().await;
+        
+        let mut scanned_form = None;
+        if let Ok(resp) = form_resp {
+            if let Ok(form_list) = resp.json::<DriveFileList>().await {
+                if let Some(file) = form_list.files.first() {
+                    scanned_form = Some(ScannedForm {
+                        form_id: file.id.clone(),
+                        name: file.name.clone(),
+                        url: format!("https://docs.google.com/forms/d/{}/edit", file.id),
+                        responder_url: format!("https://docs.google.com/forms/d/{}/viewform", file.id),
+                    });
+                }
+            }
+        }
+        
+        // Find products.json
+        let json_query = format!(
+            "'{}' in parents and name='products.json' and trashed=false",
+            folder.id
+        );
+        let json_resp = client.get("https://www.googleapis.com/drive/v3/files").query(&[("q", json_query.as_str())]).bearer_auth(&access_token).send().await;
+
+        let mut products_json_content = None;
+        if let Ok(resp) = json_resp {
+            if let Ok(json_list) = resp.json::<DriveFileList>().await {
+                 if let Some(file) = json_list.files.first() {
+                     // We found the file, maybe read it? 
+                     // Reading every file might be slow. For now let's just return the ID or maybe load on demand.
+                     // The requirement is "product information ... could be imported".
+                     // Let's store the file ID effectively? Or just read it if it's small.
+                     // Let's read it.
+                     if let Ok(content) = read_drive_file(access_token.clone(), file.id.clone()).await {
+                         products_json_content = Some(content);
+                     }
+                 }
+            }
+        }
+        
+        if scanned_form.is_some() {
+             projects.push(ScannedProject {
+                 folder_id: folder.id,
+                 name: folder.name,
+                 form: scanned_form,
+                 products_json: products_json_content
+             });
+        }
     }
     
-    let list: DriveFileList = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse file list: {}", e))?;
-        
-    // 3. Convert to ScannedForm
-    // We only have ID and Name from Drive API. We construct URLs manually.
-    let mut forms = Vec::new();
-    for file in list.files {
-        forms.push(ScannedForm {
-            form_id: file.id.clone(),
-            name: file.name,
-            url: format!("https://docs.google.com/forms/d/{}/edit", file.id),
-            responder_url: format!("https://docs.google.com/forms/d/{}/viewform", file.id),
-        });
-    }
-    
-    Ok(forms)
+    Ok(projects)
 }
 
 // Add questions to a Google Form
@@ -750,11 +907,18 @@ async fn add_form_questions(
     
     // Add product quantity questions
     for (idx, question) in questions.iter().enumerate() {
+        // Use override if available, otherwise fallback to default formatting
+        let description = if let Some(desc) = question["description_override"].as_str() {
+            desc.to_string()
+        } else {
+            format!("Price: ${:.2}", question["price"].as_f64().unwrap_or(0.0))
+        };
+
         requests.push(serde_json::json!({
             "createItem": {
                 "item": {
                     "title": format!("Quantity: {}", question["name"].as_str().unwrap_or("Product")),
-                    "description": format!("Price: ${:.2}", question["price"].as_f64().unwrap_or(0.0)),
+                    "description": description,
                     "questionItem": {
                         "question": {
                             "required": false,
@@ -879,7 +1043,9 @@ pub fn run() {
             refresh_google_token,
             get_google_user_info,
             create_google_form,
-            scan_drive_forms,
+            scan_project_folders,
+            delete_drive_file,
+            read_drive_file,
             add_form_questions,
             get_form_responses,
             get_form_details
