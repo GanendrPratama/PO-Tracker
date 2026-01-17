@@ -11,11 +11,20 @@ export interface Event {
     created_at?: string;
 }
 
+export interface ProductPrice {
+    id?: number;
+    product_id?: number;
+    currency_code: string;
+    price: number;
+}
+
 export interface Product {
     id?: number;
     name: string;
     description?: string;
     price: number;
+    currency_code?: string;
+    prices?: ProductPrice[];
     image_url?: string;
     event_id?: number;
     created_at?: string;

@@ -348,12 +348,44 @@ export function Settings() {
                             const code = e.target.value;
                             let locale = 'en-US';
                             switch (code) {
+                                // Southeast Asia
                                 case 'IDR': locale = 'id-ID'; break;
-                                case 'EUR': locale = 'de-DE'; break;
-                                case 'GBP': locale = 'en-GB'; break;
+                                case 'SGD': locale = 'en-SG'; break;
+                                case 'MYR': locale = 'en-MY'; break;
+                                case 'THB': locale = 'th-TH'; break;
+                                case 'VND': locale = 'vi-VN'; break;
+                                case 'PHP': locale = 'en-PH'; break;
+
+                                // East & South Asia
+                                case 'INR': locale = 'en-IN'; break;
+                                case 'CNY': locale = 'zh-CN'; break;
+                                case 'KRW': locale = 'ko-KR'; break;
+                                case 'HKD': locale = 'en-HK'; break;
+                                case 'TWD': locale = 'zh-TW'; break;
                                 case 'JPY': locale = 'ja-JP'; break;
-                                case 'AUD': locale = 'en-AU'; break;
+
+                                // Americas
+                                case 'USD': locale = 'en-US'; break;
                                 case 'CAD': locale = 'en-CA'; break;
+                                case 'BRL': locale = 'pt-BR'; break;
+                                case 'MXN': locale = 'es-MX'; break;
+
+                                // Europe
+                                case 'EUR': locale = 'de-DE'; break; // Default to German locale for EUR, can be adjusted
+                                case 'GBP': locale = 'en-GB'; break;
+                                case 'CHF': locale = 'de-CH'; break;
+                                case 'SEK': locale = 'sv-SE'; break;
+                                case 'NOK': locale = 'nb-NO'; break;
+
+                                // Oceania
+                                case 'AUD': locale = 'en-AU'; break;
+                                case 'NZD': locale = 'en-NZ'; break;
+
+                                // Others
+                                case 'ZAR': locale = 'en-ZA'; break;
+                                case 'AED': locale = 'en-AE'; break;
+                                case 'SAR': locale = 'en-SA'; break;
+
                                 default: locale = 'en-US';
                             }
                             await setCurrency(code, locale);
@@ -364,13 +396,52 @@ export function Settings() {
                             color: 'var(--color-text-primary)'
                         }}
                     >
-                        <option value="USD">USD ($) - US Dollar</option>
-                        <option value="IDR">IDR (Rp) - Indonesian Rupiah</option>
-                        <option value="EUR">EUR (€) - Euro</option>
-                        <option value="GBP">GBP (£) - British Pound</option>
-                        <option value="JPY">JPY (¥) - Japanese Yen</option>
-                        <option value="AUD">AUD ($) - Australian Dollar</option>
-                        <option value="CAD">CAD ($) - Canadian Dollar</option>
+                        <optgroup label="Major Currencies">
+                            <option value="USD">USD ($) - US Dollar</option>
+                            <option value="EUR">EUR (€) - Euro</option>
+                            <option value="GBP">GBP (£) - British Pound</option>
+                            <option value="JPY">JPY (¥) - Japanese Yen</option>
+                            <option value="AUD">AUD ($) - Australian Dollar</option>
+                            <option value="CAD">CAD ($) - Canadian Dollar</option>
+                            <option value="CHF">CHF (Fr) - Swiss Franc</option>
+                            <option value="CNY">CNY (¥) - Chinese Yuan</option>
+                            <option value="INR">INR (₹) - Indian Rupee</option>
+                        </optgroup>
+
+                        <optgroup label="Southeast Asia">
+                            <option value="IDR">IDR (Rp) - Indonesian Rupiah</option>
+                            <option value="SGD">SGD ($) - Singapore Dollar</option>
+                            <option value="MYR">MYR (RM) - Malaysian Ringgit</option>
+                            <option value="THB">THB (฿) - Thai Baht</option>
+                            <option value="VND">VND (₫) - Vietnamese Dong</option>
+                            <option value="PHP">PHP (₱) - Philippine Peso</option>
+                        </optgroup>
+
+                        <optgroup label="East Asia">
+                            <option value="KRW">KRW (₩) - South Korean Won</option>
+                            <option value="HKD">HKD ($) - Hong Kong Dollar</option>
+                            <option value="TWD">TWD (NT$) - New Taiwan Dollar</option>
+                        </optgroup>
+
+                        <optgroup label="Europe">
+                            <option value="SEK">SEK (kr) - Swedish Krona</option>
+                            <option value="NOK">NOK (kr) - Norwegian Krone</option>
+                        </optgroup>
+
+                        <optgroup label="Americas">
+                            <option value="BRL">BRL (R$) - Brazilian Real</option>
+                            <option value="MXN">MXN ($) - Mexican Peso</option>
+                        </optgroup>
+
+                        <optgroup label="Oceania">
+                            <option value="NZD">NZD ($) - New Zealand Dollar</option>
+                        </optgroup>
+
+                        <optgroup label="Middle East and Africa">
+                            <option value="AED">AED (د.إ) - UAE Dirham</option>
+                            <option value="SAR">SAR (﷼) - Saudi Riyal</option>
+                            <option value="ZAR">ZAR (R) - South African Rand</option>
+                        </optgroup>
                     </select>
                 </div>
             </div>

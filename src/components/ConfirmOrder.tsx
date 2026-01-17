@@ -6,6 +6,12 @@ import { usePreOrders, useSmtpSettings, useCurrency } from '../hooks/useDatabase
 import { useGoogleAuthContext } from '../contexts/GoogleAuthContext';
 import { PreOrder } from '../types';
 
+declare global {
+    interface Window {
+        __TAURI_INTERNALS__?: any;
+    }
+}
+
 export function ConfirmOrder() {
     const { confirmByCode } = usePreOrders();
     const { settings: smtpSettings } = useSmtpSettings();
@@ -20,19 +26,74 @@ export function ConfirmOrder() {
     const [scannerError, setScannerError] = useState('');
     const scannerRef = useRef<Html5Qrcode | null>(null);
     const scannerDivRef = useRef<HTMLDivElement>(null);
+    const scanTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
     // Cleanup scanner on unmount
     useEffect(() => {
         return () => {
+            if (scanTimeoutRef.current) {
+                clearTimeout(scanTimeoutRef.current);
+            }
             if (scannerRef.current) {
-                scannerRef.current.stop().catch(() => { });
+                // We wrap this in an async IIFE because cleanup function must be synchronous
+                (async () => {
+                    if (scannerRef.current) {
+                        try {
+                            if (scannerRef.current.isScanning) {
+                                await scannerRef.current.stop();
+                            }
+                            await scannerRef.current.clear();
+                        } catch (err) {
+                            console.error('Failed to cleanup scanner on unmount:', err);
+                        }
+                        scannerRef.current = null;
+                    }
+                })();
             }
         };
     }, []);
 
+
+
     const startScanner = async () => {
         setScannerError('');
 
+        // Check for native Tauri environment first
+        if (window.__TAURI_INTERNALS__) {
+            try {
+                // Dynamic import to avoid issues in pure web environment if the package assumes Tauri globals immediately
+                const { scan, Format } = await import('@tauri-apps/plugin-barcode-scanner');
+
+                // Request permission first
+                // On Android/iOS this handles the camera permission request
+                const result = await scan({
+                    windowed: true, // Specific only to Android/iOS if supported, otherwise standard overlay
+                    formats: [Format.QRCode]
+                });
+
+                if (result.content) {
+                    setCode(result.content.toUpperCase());
+                    handleConfirm(result.content.toUpperCase());
+                }
+            } catch (err: any) {
+                console.error('Native scan failed:', err);
+                // If cancellation or specific error, handle it
+                if (err === 'cancel' || err.message === 'cancel') {
+                    // User cancelled, do nothing
+                    return;
+                }
+                setScannerError(`Native scanner error: ${err.message || err}`);
+                // Fallback to web scanner if native fails?
+                // Usually if native fails in a native app, web scanner might also fail on permission, but let's try.
+                startWebScanner();
+            }
+            return;
+        }
+
+        startWebScanner();
+    };
+
+    const startWebScanner = async () => {
         // First check if getUserMedia is available
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             setScannerError('Camera not supported in this environment. Please use manual code entry.');
@@ -57,12 +118,26 @@ export function ConfirmOrder() {
         }
 
         try {
+            // Clear any existing timeout
+            if (scanTimeoutRef.current) {
+                clearTimeout(scanTimeoutRef.current);
+            }
+
+            // Set 60s timeout
+            scanTimeoutRef.current = setTimeout(() => {
+                stopScanner();
+                setScannerError('Scanner stopped due to inactivity (60s).');
+            }, 60000);
+
             // Clean up existing scanner if any
             if (scannerRef.current) {
                 try {
-                    await scannerRef.current.stop();
+                    if (scannerRef.current.isScanning) {
+                        await scannerRef.current.stop();
+                    }
+                    await scannerRef.current.clear();
                 } catch {
-                    // Ignore
+                    // Ignore cleanup errors
                 }
                 scannerRef.current = null;
             }
@@ -81,11 +156,12 @@ export function ConfirmOrder() {
                 },
                 async (decodedText) => {
                     // QR code scanned successfully
-                    setCode(decodedText.toUpperCase());
+                    const scannedCode = decodedText.toUpperCase();
+                    setCode(scannedCode);
                     await stopScanner();
 
                     // Auto-submit
-                    handleConfirm(decodedText.toUpperCase());
+                    handleConfirm(scannedCode);
                 },
                 () => {
                     // QR code not found in frame - this is normal
@@ -99,12 +175,21 @@ export function ConfirmOrder() {
     };
 
     const stopScanner = async () => {
+        if (scanTimeoutRef.current) {
+            clearTimeout(scanTimeoutRef.current);
+            scanTimeoutRef.current = null;
+        }
+
         if (scannerRef.current) {
             try {
-                await scannerRef.current.stop();
+                if (scannerRef.current.isScanning) {
+                    await scannerRef.current.stop();
+                }
+                await scannerRef.current.clear();
             } catch (err) {
-                // Ignore errors when stopping
+                console.error('Failed to stop scanner:', err);
             }
+            scannerRef.current = null;
         }
         setScannerActive(false);
     };
@@ -156,6 +241,19 @@ export function ConfirmOrder() {
         try {
             const order = await confirmByCode(confirmCode);
             if (order) {
+                // If confirmed_at is already set in the returned object, it means it was ALREADY confirmed before this call.
+                // If it is null/undefined, it means we just confirmed it (since we returned {...order, status: 'confirmed'} without updating confirmed_at in local object)
+                const isAlreadyClaimed = !!order.confirmed_at;
+
+                if (isAlreadyClaimed) {
+                    setError(`⚠️ Order ${order.confirmation_code} was ALREADY claimed on ${new Date(order.confirmed_at!).toLocaleString()}`);
+                    // We do NOT setConfirmedOrder here if we want to block the "Success" screen.
+                    // Or we can show the screen but with a warning.
+                    // The user said: "it cannot be used to claim items".
+                    // So let's show an error and NOT show the success screen.
+                    return;
+                }
+
                 setConfirmedOrder(order);
 
                 // Send confirmation email

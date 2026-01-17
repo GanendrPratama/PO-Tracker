@@ -103,6 +103,27 @@ export async function getDatabase(): Promise<Database> {
             await db.execute('ALTER TABLE app_settings ADD COLUMN currency_code TEXT DEFAULT "USD"');
             await db.execute('ALTER TABLE app_settings ADD COLUMN currency_locale TEXT DEFAULT "en-US"');
         } catch { /* Column might already exist */ }
+
+        // Add is_active column for soft deletes (products)
+        try {
+            await db.execute('ALTER TABLE products ADD COLUMN is_active INTEGER DEFAULT 1');
+        } catch { /* Column might already exist */ }
+
+        // Product Prices table
+        await db.execute(`
+            CREATE TABLE IF NOT EXISTS product_prices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_id INTEGER NOT NULL,
+                currency_code TEXT NOT NULL,
+                price REAL NOT NULL,
+                FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+            )
+        `);
+
+        // Add currency_code column to products
+        try {
+            await db.execute('ALTER TABLE products ADD COLUMN currency_code TEXT DEFAULT "USD"');
+        } catch { /* Column might already exist */ }
     }
     return db;
 }
@@ -115,8 +136,18 @@ export function useProducts() {
     const loadProducts = useCallback(async () => {
         try {
             const database = await getDatabase();
-            const result = await database.select<Product[]>('SELECT * FROM products ORDER BY created_at DESC');
-            setProducts(result);
+            const productsResult = await database.select<Product[]>('SELECT * FROM products WHERE is_active = 1 ORDER BY created_at DESC');
+
+            // Load prices for each product
+            const productsWithPrices = await Promise.all(productsResult.map(async (p) => {
+                const prices = await database.select<{ id: number, product_id: number, currency_code: string, price: number }[]>(
+                    'SELECT * FROM product_prices WHERE product_id = ?',
+                    [p.id]
+                );
+                return { ...p, prices };
+            }));
+
+            setProducts(productsWithPrices);
         } catch (error) {
             console.error('Failed to load products:', error);
         } finally {
@@ -130,25 +161,50 @@ export function useProducts() {
 
     const addProduct = async (product: Omit<Product, 'id' | 'created_at'>) => {
         const database = await getDatabase();
-        await database.execute(
-            'INSERT INTO products (name, description, price, image_url) VALUES (?, ?, ?, ?)',
-            [product.name, product.description || null, product.price, product.image_url || null]
+        const result = await database.execute(
+            'INSERT INTO products (name, description, price, currency_code, image_url, event_id) VALUES (?, ?, ?, ?, ?, ?)',
+            [product.name, product.description || null, product.price, product.currency_code || 'USD', product.image_url || null, product.event_id || null]
         );
+
+        const productId = result.lastInsertId;
+
+        if (product.prices && product.prices.length > 0) {
+            for (const p of product.prices) {
+                await database.execute(
+                    'INSERT INTO product_prices (product_id, currency_code, price) VALUES (?, ?, ?)',
+                    [productId, p.currency_code, p.price]
+                );
+            }
+        }
+
         await loadProducts();
     };
 
     const updateProduct = async (id: number, product: Partial<Product>) => {
         const database = await getDatabase();
         await database.execute(
-            'UPDATE products SET name = ?, description = ?, price = ?, image_url = ? WHERE id = ?',
-            [product.name, product.description || null, product.price, product.image_url || null, id]
+            'UPDATE products SET name = ?, description = ?, price = ?, currency_code = ?, image_url = ?, event_id = ? WHERE id = ?',
+            [product.name, product.description || null, product.price, product.currency_code || 'USD', product.image_url || null, product.event_id || null, id]
         );
+
+        if (product.prices) {
+            // Replace all prices (simple strategy)
+            await database.execute('DELETE FROM product_prices WHERE product_id = ?', [id]);
+            for (const p of product.prices) {
+                await database.execute(
+                    'INSERT INTO product_prices (product_id, currency_code, price) VALUES (?, ?, ?)',
+                    [id, p.currency_code, p.price]
+                );
+            }
+        }
+
         await loadProducts();
     };
 
     const deleteProduct = async (id: number) => {
         const database = await getDatabase();
-        await database.execute('DELETE FROM products WHERE id = ?', [id]);
+        // Soft delete instead of hard delete
+        await database.execute('UPDATE products SET is_active = 0 WHERE id = ?', [id]);
         await loadProducts();
     };
 
@@ -236,12 +292,19 @@ export function usePreOrders() {
         );
 
         if (orders.length > 0) {
+            const order = orders[0];
+            // Check if already confirmed
+            if (order.status === 'confirmed') {
+                console.log("Order already confirmed:", order);
+                return order; // Return order but don't update status, component will check status
+            }
+
             await database.execute(
                 'UPDATE preorders SET status = ?, confirmed_at = CURRENT_TIMESTAMP WHERE confirmation_code = ?',
                 ['confirmed', code.toUpperCase()]
             );
             await loadOrders();
-            return { ...orders[0], status: 'confirmed' };
+            return { ...order, status: 'confirmed' };
         }
         return null;
     };

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import QRCode from 'qrcode';
 import { useGoogleAuthContext } from '../contexts/GoogleAuthContext';
-import { useGoogleForms, useProducts, usePreOrders, useSmtpSettings } from '../hooks/useDatabase';
+import { useGoogleForms, useProducts, usePreOrders, useSmtpSettings, useEvents } from '../hooks/useDatabase';
 import { FormEditor } from './FormEditor';
 import { Product } from '../types';
 
@@ -27,18 +27,49 @@ interface FormItem {
     }
 }
 
+interface ScannedProject {
+    folder_id: string;
+    name: string;
+    form?: {
+        form_id: string;
+        name: string;
+        url: string;
+        responder_url: string;
+    };
+    products_json?: string;
+}
+
+interface ScannedProject {
+    folder_id: string;
+    name: string;
+    form?: {
+        form_id: string;
+        name: string;
+        url: string;
+        responder_url: string;
+    };
+    products_json?: string;
+}
+
 export function GoogleForms() {
     const { auth, isAuthenticated, isConfigured, startAuth, signOut, getAccessToken, loading: authLoading } = useGoogleAuthContext();
     const { forms, syncSettings, saveForm, updateLastSynced, saveSyncSettings, isResponseSynced, markResponseSynced, deleteForm, loading: formsLoading } = useGoogleForms();
     const { products } = useProducts();
+    const { events } = useEvents();
     const { createOrder } = usePreOrders();
     const { settings: smtpSettings } = useSmtpSettings();
 
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
     const [creating, setCreating] = useState(false);
     const [syncing, setSyncing] = useState(false);
+    const [scanning, setScanning] = useState(false);
     const [showFormEditor, setShowFormEditor] = useState(false);
     const [orderedProducts, setOrderedProducts] = useState<Product[]>([]);
+    const [projects, setProjects] = useState<ScannedProject[]>([]); // New state for projects containing forms
+
+    // Form Creation Options
+    const [selectionMode, setSelectionMode] = useState<'manual' | 'event'>('manual');
+    const [selectedEventId, setSelectedEventId] = useState<string>('');
 
     // Initialize ordered products when products change
     useEffect(() => {
@@ -81,29 +112,61 @@ export function GoogleForms() {
             return;
         }
 
-        const productsToUse = orderedProducts.length > 0 ? orderedProducts : products;
+        let productsToUse: Product[] = [];
+
+        if (selectionMode === 'event') {
+            if (!selectedEventId) {
+                setMessage({ type: 'error', text: 'Please select an event first' });
+                return;
+            }
+            productsToUse = products.filter(p => p.event_id?.toString() === selectedEventId);
+        } else {
+            productsToUse = orderedProducts.length > 0 ? orderedProducts : products;
+        }
 
         if (productsToUse.length === 0) {
-            setMessage({ type: 'error', text: 'No products available. Add products first!' });
+            setMessage({ type: 'error', text: 'No products available for selected option. Add products first!' });
             return;
         }
 
         setCreating(true);
         try {
-            const title = `Pre-Order Form - ${new Date().toLocaleDateString()}`;
+            // Get Event Name if applicable
+            let titleSuffix = new Date().toLocaleDateString();
+            if (selectionMode === 'event') {
+                const event = events.find(e => e.id?.toString() === selectedEventId);
+                if (event) titleSuffix = event.name;
+            }
+            const title = `Pre-Order Form - ${titleSuffix}`;
 
-            // Create form
+            // Create form (and folder, and products.json)
             const formResponse: any = await invoke('create_google_form', {
                 accessToken,
-                title
+                title,
+                productsJson: JSON.stringify(productsToUse)
             });
 
             // Add questions with ordered products
-            const questions = productsToUse.map(p => ({
-                name: p.name,
-                price: p.price,
-                id: p.id
-            }));
+            const questions = productsToUse.map(p => {
+                // Build description with prices
+                // Format: Price: IDR 150,000 / USD 10.00
+                const baseCurrency = p.currency_code || 'USD';
+                const priceStrs = [`${baseCurrency} ${p.price.toLocaleString()}`];
+
+                if (p.prices && p.prices.length > 0) {
+                    p.prices.forEach(pp => {
+                        priceStrs.push(`${pp.currency_code} ${pp.price.toLocaleString()}`);
+                    });
+                }
+                const description = `Price: ${priceStrs.join(' / ')}`;
+
+                return {
+                    name: p.name,
+                    price: p.price,
+                    description_override: description, // Pass to Rust to use this instead of auto-generated
+                    id: p.id
+                };
+            });
 
             await invoke('add_form_questions', {
                 accessToken,
@@ -125,6 +188,85 @@ export function GoogleForms() {
             setMessage({ type: 'error', text: `Failed to create form: ${error}` });
         } finally {
             setCreating(false);
+        }
+    };
+
+    const handleScanProjects = async () => {
+        const accessToken = getAccessToken();
+        if (!accessToken) {
+            setMessage({ type: 'error', text: 'Please sign in to Google first.' });
+            return;
+        }
+
+        setScanning(true);
+        try {
+            setMessage({ type: 'success', text: 'Scanning "po-tracker" folders...' });
+
+            const scannedProjects: ScannedProject[] = await invoke('scan_project_folders', { accessToken });
+
+            setProjects(scannedProjects);
+
+            let newCount = 0;
+            // Auto-import forms if they exist in the project
+            for (const proj of scannedProjects) {
+                if (proj.form) {
+                    const exists = forms.some(f => f.form_id === proj.form!.form_id);
+                    if (!exists) {
+                        await saveForm(proj.form.form_id, proj.form.url, proj.form.responder_url, proj.name);
+                        newCount++;
+                    }
+                }
+            }
+
+            if (newCount > 0) {
+                setMessage({ type: 'success', text: `Found ${scannedProjects.length} projects and imported ${newCount} new form(s)!` });
+            } else if (scannedProjects.length === 0) {
+                setMessage({ type: 'error', text: 'No project folders found.' });
+            } else {
+                setMessage({ type: 'success', text: `Found ${scannedProjects.length} projects. All forms synced.` });
+            }
+        } catch (error) {
+            console.error('Failed to scan projects:', error);
+            setMessage({ type: 'error', text: `Failed to scan projects: ${error}` });
+        } finally {
+            setScanning(false);
+        }
+    };
+
+    // View products in a project
+    const handleViewProjectProducts = (proj: ScannedProject) => {
+        if (!proj.products_json) {
+            alert('No product data found for this project.');
+            return;
+        }
+        try {
+            const products: Product[] = JSON.parse(proj.products_json);
+            console.log("Project Products:", products);
+            // Could show a modal here, for now just alert count
+            alert(`Project "${proj.name}" has ${products.length} configured products.\n\n(Check console for details)`);
+        } catch (e) {
+            alert('Failed to parse product data.');
+        }
+    };
+
+    const handleDeleteProject = async (folderId: string, name: string) => {
+        if (!window.confirm(`Are you sure you want to delete the project folder "${name}"?\n\nThis will move the folder and its contents to the Trash in Google Drive.`)) {
+            return;
+        }
+
+        const accessToken = getAccessToken();
+        if (!accessToken) return;
+
+        try {
+            setMessage({ type: 'success', text: 'Deleting project...' });
+            await invoke('delete_drive_file', { accessToken, fileId: folderId });
+            setMessage({ type: 'success', text: `Project "${name}" moved to trash.` });
+
+            // Remove from list
+            setProjects(prev => prev.filter(p => p.folder_id !== folderId));
+        } catch (error) {
+            console.error('Failed to delete project:', error);
+            setMessage({ type: 'error', text: `Failed to delete project: ${error}` });
         }
     };
 
@@ -461,81 +603,122 @@ export function GoogleForms() {
                 <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
                     <div className="card-header">
                         <h3 className="card-title">📝 Create Pre-Order Form</h3>
-                        <button
-                            className="btn btn-secondary"
-                            onClick={() => setShowFormEditor(true)}
-                            disabled={products.length === 0}
-                        >
-                            ✏️ Edit Layout
-                        </button>
+                        <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
+                            <button
+                                className="btn btn-secondary"
+                                onClick={() => setShowFormEditor(true)}
+                                disabled={products.length === 0}
+                            >
+                                ✏️ Edit Layout
+                            </button>
+                        </div>
                     </div>
                     <p style={{ color: 'var(--color-text-secondary)', marginBottom: 'var(--space-lg)' }}>
-                        Create a new Google Form with your {products.length} product(s). Customers can fill it out, and responses will be synced as pre-orders.
+                        Create a new Google Form.
+                        Forms are automatically organized in a <strong>'po-tracker'</strong> folder in your Google Drive.
                     </p>
-                    <button
-                        className="btn btn-primary"
-                        onClick={createPreOrderForm}
-                        disabled={creating || products.length === 0}
-                    >
-                        {creating ? '⏳ Creating...' : '➕ Create New Form'}
-                    </button>
-                </div>
-            )}
 
-            {/* Existing Forms */}
-            {forms.length > 0 && (
-                <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
-                    <div className="card-header">
-                        <h3 className="card-title">📋 Your Forms</h3>
-                        <button
-                            className="btn btn-primary"
-                            onClick={syncAllForms}
-                            disabled={syncing}
-                        >
-                            {syncing ? '⏳ Syncing...' : '🔄 Sync All'}
-                        </button>
+                    <div style={{ marginBottom: 'var(--space-md)', padding: 'var(--space-md)', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)' }}>
+                        <label className="form-label" style={{ marginBottom: '8px' }}>Select Products Source:</label>
+                        <div style={{ display: 'flex', gap: '16px', marginBottom: '16px' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                                <input
+                                    type="radio"
+                                    name="selectionMode"
+                                    checked={selectionMode === 'manual'}
+                                    onChange={() => setSelectionMode('manual')}
+                                />
+                                All Products / Manual Layout
+                            </label>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                                <input
+                                    type="radio"
+                                    name="selectionMode"
+                                    checked={selectionMode === 'event'}
+                                    onChange={() => setSelectionMode('event')}
+                                />
+                                By Event
+                            </label>
+                        </div>
+
+                        {selectionMode === 'event' && (
+                            <div className="form-group">
+                                <select
+                                    className="form-input"
+                                    value={selectedEventId}
+                                    onChange={(e) => setSelectedEventId(e.target.value)}
+                                >
+                                    <option value="">-- Select Event --</option>
+                                    {events.map(e => (
+                                        <option key={e.id} value={e.id}>{e.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
                     </div>
 
+                    <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
+                        <button
+                            className="btn btn-primary"
+                            onClick={createPreOrderForm}
+                            disabled={creating || products.length === 0}
+                        >
+                            {creating ? '⏳ Creating...' : '➕ Create New Form'}
+                        </button>
+                        <button
+                            className="btn btn-secondary"
+                            onClick={handleScanProjects}
+                            disabled={scanning}
+                        >
+                            {scanning ? '⏳ Scanning...' : '📂 Scan Projects'}
+                        </button>
+                    </div>
+                </div>
+            )
+            }
+
+            {/* Scanned Projects List */}
+            {projects.length > 0 && (
+                <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
+                    <div className="card-header">
+                        <h3 className="card-title">📁 Cloud Projects</h3>
+                    </div>
                     <div className="table-container">
                         <table className="table">
                             <thead>
                                 <tr>
-                                    <th>Title</th>
-                                    <th>Created</th>
-                                    <th>Last Synced</th>
+                                    <th>Project Name</th>
+                                    <th>Form Status</th>
+                                    <th>Products Config</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {forms.map((form) => (
-                                    <tr key={form.id}>
-                                        <td style={{ fontWeight: 500 }}>{form.title}</td>
-                                        <td>{formatDate(form.created_at)}</td>
-                                        <td>{formatDate(form.last_synced_at)}</td>
+                                {projects.map(proj => (
+                                    <tr key={proj.folder_id}>
+                                        <td style={{ fontWeight: 500 }}>{proj.name}</td>
+                                        <td>
+                                            {proj.form ? <span style={{ color: 'green' }}>✅ Linked</span> : <span style={{ color: 'orange' }}>⚠️ Missing Form</span>}
+                                        </td>
+                                        <td>
+                                            {proj.products_json ? <span style={{ color: 'green' }}>✅ Saved</span> : <span style={{ color: 'gray' }}>Not available</span>}
+                                        </td>
                                         <td>
                                             <div className="btn-group">
-                                                <a
-                                                    href={form.responder_url}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="btn btn-secondary"
-                                                    style={{ textDecoration: 'none' }}
-                                                >
-                                                    📝 Fill
-                                                </a>
-                                                <a
-                                                    href={form.form_url}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="btn btn-secondary"
-                                                    style={{ textDecoration: 'none' }}
-                                                >
-                                                    ✏️ Edit
-                                                </a>
+                                                {proj.products_json && (
+                                                    <button
+                                                        className="btn btn-sm btn-secondary"
+                                                        onClick={() => handleViewProjectProducts(proj)}
+                                                        title="View Configured Products"
+                                                    >
+                                                        👁️
+                                                    </button>
+                                                )}
                                                 <button
                                                     className="btn btn-icon"
-                                                    onClick={() => deleteForm(form.form_id)}
-                                                    title="Remove"
+                                                    onClick={() => handleDeleteProject(proj.folder_id, proj.name)}
+                                                    title="Delete Project Folder"
+                                                    style={{ color: 'var(--color-error)' }}
                                                 >
                                                     🗑️
                                                 </button>
@@ -549,55 +732,130 @@ export function GoogleForms() {
                 </div>
             )}
 
-            {/* Sync Settings */}
-            {isAuthenticated && (
-                <div className="card">
-                    <h3 className="card-title" style={{ marginBottom: 'var(--space-lg)' }}>⏰ Auto-Sync Settings</h3>
+            {/* Existing Forms */}
+            {
+                forms.length > 0 && (
+                    <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
+                        <div className="card-header">
+                            <h3 className="card-title">📋 Your Forms</h3>
+                            <button
+                                className="btn btn-primary"
+                                onClick={syncAllForms}
+                                disabled={syncing}
+                            >
+                                {syncing ? '⏳ Syncing...' : '🔄 Sync All'}
+                            </button>
+                        </div>
 
-                    <div style={{ display: 'flex', gap: 'var(--space-lg)', alignItems: 'center', flexWrap: 'wrap' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', cursor: 'pointer' }}>
-                            <input
-                                type="checkbox"
-                                checked={syncSettings.auto_sync_enabled}
-                                onChange={(e) => saveSyncSettings(e.target.checked, syncSettings.sync_interval_minutes)}
-                                style={{ width: 20, height: 20 }}
-                            />
-                            Enable auto-sync
-                        </label>
-
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
-                            <span>Sync every</span>
-                            <input
-                                type="number"
-                                className="form-input"
-                                value={syncSettings.sync_interval_minutes}
-                                onChange={(e) => saveSyncSettings(syncSettings.auto_sync_enabled, Math.max(1, parseInt(e.target.value) || 1))}
-                                style={{ width: 80, padding: '4px 8px' }}
-                                min="1"
-                            />
-                            <span>minutes</span>
+                        <div className="table-container">
+                            <table className="table">
+                                <thead>
+                                    <tr>
+                                        <th>Title</th>
+                                        <th>Created</th>
+                                        <th>Last Synced</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {forms.map((form) => (
+                                        <tr key={form.id}>
+                                            <td style={{ fontWeight: 500 }}>{form.title}</td>
+                                            <td>{formatDate(form.created_at)}</td>
+                                            <td>{formatDate(form.last_synced_at)}</td>
+                                            <td>
+                                                <div className="btn-group">
+                                                    <a
+                                                        href={form.responder_url}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="btn btn-secondary"
+                                                        style={{ textDecoration: 'none' }}
+                                                    >
+                                                        📝 Fill
+                                                    </a>
+                                                    <a
+                                                        href={form.form_url}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="btn btn-secondary"
+                                                        style={{ textDecoration: 'none' }}
+                                                    >
+                                                        ✏️ Edit
+                                                    </a>
+                                                    <button
+                                                        className="btn btn-icon"
+                                                        onClick={() => deleteForm(form.form_id)}
+                                                        title="Remove"
+                                                    >
+                                                        🗑️
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
-                </div>
-            )}
+                )
+            }
+
+            {/* Sync Settings */}
+            {
+                isAuthenticated && (
+                    <div className="card">
+                        <h3 className="card-title" style={{ marginBottom: 'var(--space-lg)' }}>⏰ Auto-Sync Settings</h3>
+
+                        <div style={{ display: 'flex', gap: 'var(--space-lg)', alignItems: 'center', flexWrap: 'wrap' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', cursor: 'pointer' }}>
+                                <input
+                                    type="checkbox"
+                                    checked={syncSettings.auto_sync_enabled}
+                                    onChange={(e) => saveSyncSettings(e.target.checked, syncSettings.sync_interval_minutes)}
+                                    style={{ width: 20, height: 20 }}
+                                />
+                                Enable auto-sync
+                            </label>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+                                <span>Sync every</span>
+                                <input
+                                    type="number"
+                                    className="form-input"
+                                    value={syncSettings.sync_interval_minutes}
+                                    onChange={(e) => saveSyncSettings(syncSettings.auto_sync_enabled, Math.max(1, parseInt(e.target.value) || 1))}
+                                    style={{ width: 80, padding: '4px 8px' }}
+                                    min="1"
+                                />
+                                <span>minutes</span>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
 
 
 
             {/* Form Editor Modal */}
-            {showFormEditor && (
-                <FormEditor
-                    products={orderedProducts.length > 0 ? orderedProducts : products}
-                    onSave={handleFormEditorSave}
-                    onCancel={() => setShowFormEditor(false)}
-                />
-            )}
+            {
+                showFormEditor && (
+                    <FormEditor
+                        products={orderedProducts.length > 0 ? orderedProducts : products}
+                        onSave={handleFormEditorSave}
+                        onCancel={() => setShowFormEditor(false)}
+                    />
+                )
+            }
 
             {/* Toast */}
-            {message && (
-                <div className={`toast ${message.type}`}>
-                    {message.text}
-                </div>
-            )}
-        </div>
+            {
+                message && (
+                    <div className={`toast ${message.type}`}>
+                        {message.text}
+                    </div>
+                )
+            }
+        </div >
     );
 }
