@@ -10,6 +10,9 @@
     "opener:default",
     "sql:default",
     "sql:allow-execute",
-    "sql:allow-select"
+    "sql:allow-select",
+    "barcode-scanner:default",
+    "dialog:default",
+    "fs:default"
   ]
 }

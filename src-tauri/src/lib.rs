@@ -657,9 +657,11 @@ async fn scan_drive_forms(access_token: String) -> Result<Vec<ScannedForm>, Stri
     let client = Client::new();
     
     // 1. Find folder
-    let folder_id = find_folder(&client, &access_token, "po-tracker")
-        .await?
-        .ok_or("Folder 'po-tracker' not found".to_string())?;
+    // 1. Find folder
+    let folder_id = match find_folder(&client, &access_token, "po-tracker").await? {
+        Some(id) => id,
+        None => create_folder(&client, &access_token, "po-tracker").await?
+    };
         
     // 2. List forms in folder
     let query = format!(
@@ -853,9 +855,19 @@ async fn get_form_details(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init());
+
+    #[cfg(mobile)]
+    {
+        builder = builder.plugin(tauri_plugin_barcode_scanner::init());
+    }
+
+    builder
         .invoke_handler(tauri::generate_handler![
             generate_confirmation_code,
             send_invoice_email,

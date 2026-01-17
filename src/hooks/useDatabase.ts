@@ -103,6 +103,11 @@ export async function getDatabase(): Promise<Database> {
             await db.execute('ALTER TABLE app_settings ADD COLUMN currency_code TEXT DEFAULT "USD"');
             await db.execute('ALTER TABLE app_settings ADD COLUMN currency_locale TEXT DEFAULT "en-US"');
         } catch { /* Column might already exist */ }
+
+        // Add is_active column for soft deletes (products)
+        try {
+            await db.execute('ALTER TABLE products ADD COLUMN is_active INTEGER DEFAULT 1');
+        } catch { /* Column might already exist */ }
     }
     return db;
 }
@@ -115,7 +120,7 @@ export function useProducts() {
     const loadProducts = useCallback(async () => {
         try {
             const database = await getDatabase();
-            const result = await database.select<Product[]>('SELECT * FROM products ORDER BY created_at DESC');
+            const result = await database.select<Product[]>('SELECT * FROM products WHERE is_active = 1 ORDER BY created_at DESC');
             setProducts(result);
         } catch (error) {
             console.error('Failed to load products:', error);
@@ -148,7 +153,8 @@ export function useProducts() {
 
     const deleteProduct = async (id: number) => {
         const database = await getDatabase();
-        await database.execute('DELETE FROM products WHERE id = ?', [id]);
+        // Soft delete instead of hard delete
+        await database.execute('UPDATE products SET is_active = 0 WHERE id = ?', [id]);
         await loadProducts();
     };
 
@@ -236,12 +242,19 @@ export function usePreOrders() {
         );
 
         if (orders.length > 0) {
+            const order = orders[0];
+            // Check if already confirmed
+            if (order.status === 'confirmed') {
+                console.log("Order already confirmed:", order);
+                return order; // Return order but don't update status, component will check status
+            }
+
             await database.execute(
                 'UPDATE preorders SET status = ?, confirmed_at = CURRENT_TIMESTAMP WHERE confirmation_code = ?',
                 ['confirmed', code.toUpperCase()]
             );
             await loadOrders();
-            return { ...orders[0], status: 'confirmed' };
+            return { ...order, status: 'confirmed' };
         }
         return null;
     };

@@ -6,6 +6,12 @@ import { usePreOrders, useSmtpSettings, useCurrency } from '../hooks/useDatabase
 import { useGoogleAuthContext } from '../contexts/GoogleAuthContext';
 import { PreOrder } from '../types';
 
+declare global {
+    interface Window {
+        __TAURI_INTERNALS__?: any;
+    }
+}
+
 export function ConfirmOrder() {
     const { confirmByCode } = usePreOrders();
     const { settings: smtpSettings } = useSmtpSettings();
@@ -47,9 +53,47 @@ export function ConfirmOrder() {
         };
     }, []);
 
+
+
     const startScanner = async () => {
         setScannerError('');
 
+        // Check for native Tauri environment first
+        if (window.__TAURI_INTERNALS__) {
+            try {
+                // Dynamic import to avoid issues in pure web environment if the package assumes Tauri globals immediately
+                const { scan, Format } = await import('@tauri-apps/plugin-barcode-scanner');
+
+                // Request permission first
+                // On Android/iOS this handles the camera permission request
+                const result = await scan({
+                    windowed: true, // Specific only to Android/iOS if supported, otherwise standard overlay
+                    formats: [Format.QRCode]
+                });
+
+                if (result.content) {
+                    setCode(result.content.toUpperCase());
+                    handleConfirm(result.content.toUpperCase());
+                }
+            } catch (err: any) {
+                console.error('Native scan failed:', err);
+                // If cancellation or specific error, handle it
+                if (err === 'cancel' || err.message === 'cancel') {
+                    // User cancelled, do nothing
+                    return;
+                }
+                setScannerError(`Native scanner error: ${err.message || err}`);
+                // Fallback to web scanner if native fails?
+                // Usually if native fails in a native app, web scanner might also fail on permission, but let's try.
+                startWebScanner();
+            }
+            return;
+        }
+
+        startWebScanner();
+    };
+
+    const startWebScanner = async () => {
         // First check if getUserMedia is available
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             setScannerError('Camera not supported in this environment. Please use manual code entry.');
@@ -197,6 +241,19 @@ export function ConfirmOrder() {
         try {
             const order = await confirmByCode(confirmCode);
             if (order) {
+                // If confirmed_at is already set in the returned object, it means it was ALREADY confirmed before this call.
+                // If it is null/undefined, it means we just confirmed it (since we returned {...order, status: 'confirmed'} without updating confirmed_at in local object)
+                const isAlreadyClaimed = !!order.confirmed_at;
+
+                if (isAlreadyClaimed) {
+                    setError(`⚠️ Order ${order.confirmation_code} was ALREADY claimed on ${new Date(order.confirmed_at!).toLocaleString()}`);
+                    // We do NOT setConfirmedOrder here if we want to block the "Success" screen.
+                    // Or we can show the screen but with a warning.
+                    // The user said: "it cannot be used to claim items".
+                    // So let's show an error and NOT show the success screen.
+                    return;
+                }
+
                 setConfirmedOrder(order);
 
                 // Send confirmation email
