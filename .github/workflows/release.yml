@@ -24,14 +24,9 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev build-essential curl wget libssl-dev file libfuse2
-
-      - name: Redirect Tauri dependencies for Ubuntu 22.04 (if needed for old libraries)
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          # Sometimes needed for Tauri v2 on 22.04 depending on webkit version
-          # But generic install above usually suffices.
-          echo "Dependencies installed."
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev build-essential curl wget libssl-dev file flatpak flatpak-builder
+          flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y flathub org.gnome.Platform//46 org.gnome.Sdk//46 org.freedesktop.Sdk.Extension.rust-stable//24.08
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -42,7 +37,6 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          # Those targets are usually included by default, but it doesn't hurt to be explicit
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Install frontend dependencies
@@ -55,8 +49,7 @@ jobs:
           echo "VITE_GOOGLE_CLIENT_ID=${{ secrets.VITE_GOOGLE_CLIENT_ID }}" >> .env
           echo "VITE_GOOGLE_CLIENT_SECRET=${{ secrets.VITE_GOOGLE_CLIENT_SECRET }}" >> .env
           echo "VITE_API_URL=${{ secrets.VITE_API_URL }}" >> .env
-          # Add other secrets as needed
-          cat .env # Optional: Verify file was created (secrets will be masked)
+          cat .env
 
       - name: Build the app
         uses: tauri-apps/tauri-action@v0
@@ -69,3 +62,19 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.platform == 'macos-latest' && '--target universal-apple-darwin' || '' }}
+
+      - name: Build Flatpak (Ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          flatpak-builder --user --install-deps-from=flathub --force-clean build-dir com.ganendr.potracker.yml
+          flatpak build-export repo build-dir
+          flatpak build-bundle repo POTracker.flatpak com.ganendr.potracker
+
+      - name: Upload Flatpak to Release
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: POTracker.flatpak
+          draft: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
