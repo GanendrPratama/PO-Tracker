@@ -21,8 +21,7 @@ export function ProductList() {
     });
     const [imagePreview, setImagePreview] = useState<string | null>(null);
     const [dragOver, setDragOver] = useState(false);
-    const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
-    const [deleting, setDeleting] = useState(false);
+    const [deleting, setDeleting] = useState<number | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -86,12 +85,11 @@ export function ProductList() {
     };
 
     const handleDelete = async (id: number) => {
-        setDeleting(true);
+        setDeleting(id);
         try {
             await deleteProduct(id);
         } finally {
-            setDeleting(false);
-            setDeleteConfirmId(null);
+            setDeleting(null);
         }
     };
 
@@ -206,10 +204,11 @@ export function ProductList() {
                                     </button>
                                     <button
                                         className="btn btn-icon"
-                                        onClick={() => product.id && setDeleteConfirmId(product.id)}
+                                        onClick={() => product.id && handleDelete(product.id)}
                                         title="Delete"
+                                        disabled={deleting === product.id}
                                     >
-                                        🗑️
+                                        {deleting === product.id ? '⏳' : '🗑️'}
                                     </button>
                                 </div>
                             </div>
@@ -406,28 +405,6 @@ export function ProductList() {
                 </div>
             )}
 
-            {/* Delete Confirmation Modal */}
-            {deleteConfirmId != null && (
-                <div className="modal-overlay" onClick={() => setDeleteConfirmId(null)}>
-                    <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '400px' }}>
-                        <div className="modal-header">
-                            <h3 className="modal-title">⚠️ Delete Product</h3>
-                            <button className="modal-close" onClick={() => setDeleteConfirmId(null)}>×</button>
-                        </div>
-                        <p style={{ marginBottom: 'var(--space-lg)', color: 'var(--color-text-secondary)' }}>
-                            Are you sure you want to delete this product? This action cannot be undone.
-                        </p>
-                        <div className="btn-group" style={{ justifyContent: 'flex-end' }}>
-                            <button className="btn btn-secondary" onClick={() => setDeleteConfirmId(null)} disabled={deleting}>
-                                Cancel
-                            </button>
-                            <button className="btn btn-danger" onClick={() => handleDelete(deleteConfirmId)} disabled={deleting}>
-                                {deleting ? '⏳ Deleting...' : '🗑️ Delete'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

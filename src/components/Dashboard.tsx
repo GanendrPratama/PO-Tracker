@@ -109,17 +109,15 @@ export function Dashboard() {
     };
 
     const handleDelete = async (id: number) => {
-        if (confirm('Are you sure you want to delete this order? This action cannot be undone.')) {
-            setProcessingId(id);
-            try {
-                await deleteOrder(id);
-                setMessage({ type: 'success', text: 'Order deleted successfully' });
-            } catch (error) {
-                console.error('Failed to delete order:', error);
-                setMessage({ type: 'error', text: 'Failed to delete order' });
-            } finally {
-                setProcessingId(null);
-            }
+        setProcessingId(id);
+        try {
+            await deleteOrder(id);
+            setMessage({ type: 'success', text: 'Order deleted successfully' });
+        } catch (error) {
+            console.error('Failed to delete order:', error);
+            setMessage({ type: 'error', text: 'Failed to delete order' });
+        } finally {
+            setProcessingId(null);
         }
     };
 
