@@ -124,4 +124,25 @@ export interface SyncSettings {
     sync_interval_minutes: number;
 }
 
+// Invoice Template types
+export interface InvoiceSection {
+    id: string;
+    type: 'header' | 'greeting' | 'qr_code' | 'items_table' | 'total' | 'footer';
+    label: string;
+    enabled: boolean;
+    order: number;
+}
+
+export interface InvoiceTemplate {
+    sections: InvoiceSection[];
+    header_title: string;
+    header_subtitle: string;
+    footer_text: string;
+    primary_color: string;
+    secondary_color: string;
+    use_banner_image: boolean;
+    banner_image_url: string;
+}
+
 export type View = 'dashboard' | 'products' | 'new-order' | 'confirm' | 'settings' | 'google-forms' | 'events';
+

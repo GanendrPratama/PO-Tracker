@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { useProducts, useCurrency, useEvents } from '../hooks/useDatabase';
 import { Product } from '../types';
 
@@ -13,16 +13,12 @@ export function ProductList() {
         description: string;
         price: string;
         currency_code: string;
-        image_url: string;
         event_id: string;
         prices: { currency_code: string; price: string }[];
     }>({
-        name: '', description: '', price: '', currency_code: 'USD', image_url: '', event_id: '', prices: []
+        name: '', description: '', price: '', currency_code: 'USD', event_id: '', prices: []
     });
-    const [imagePreview, setImagePreview] = useState<string | null>(null);
-    const [dragOver, setDragOver] = useState(false);
     const [deleting, setDeleting] = useState<number | null>(null);
-    const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -37,7 +33,6 @@ export function ProductList() {
             description: formData.description,
             price,
             currency_code: formData.currency_code || 'USD',
-            image_url: formData.image_url || undefined,
             event_id: formData.event_id ? parseInt(formData.event_id) : undefined,
             prices
         };
@@ -54,9 +49,8 @@ export function ProductList() {
     const openAddModal = () => {
         setEditingProduct(null);
         setFormData({
-            name: '', description: '', price: '', currency_code: 'USD', image_url: '', event_id: '', prices: []
+            name: '', description: '', price: '', currency_code: 'USD', event_id: '', prices: []
         });
-        setImagePreview(null);
         setShowModal(true);
     };
 
@@ -67,21 +61,18 @@ export function ProductList() {
             description: product.description || '',
             price: product.price.toString(),
             currency_code: product.currency_code || 'USD',
-            image_url: product.image_url || '',
             event_id: product.event_id ? product.event_id.toString() : '',
             prices: product.prices
                 ? product.prices.map(p => ({ currency_code: p.currency_code, price: p.price.toString() }))
                 : []
         });
-        setImagePreview(product.image_url || null);
         setShowModal(true);
     };
 
     const closeModal = () => {
         setShowModal(false);
         setEditingProduct(null);
-        setFormData({ name: '', description: '', price: '', currency_code: 'USD', image_url: '', event_id: '', prices: [] });
-        setImagePreview(null);
+        setFormData({ name: '', description: '', price: '', currency_code: 'USD', event_id: '', prices: [] });
     };
 
     const handleDelete = async (id: number) => {
@@ -90,48 +81,6 @@ export function ProductList() {
             await deleteProduct(id);
         } finally {
             setDeleting(null);
-        }
-    };
-
-
-
-    const handleImageUrlChange = (url: string) => {
-        setFormData({ ...formData, image_url: url });
-        setImagePreview(url);
-    };
-
-    const handleFileDrop = (e: React.DragEvent) => {
-        e.preventDefault();
-        setDragOver(false);
-
-        const file = e.dataTransfer.files[0];
-        if (file && file.type.startsWith('image/')) {
-            convertFileToDataUrl(file);
-        }
-    };
-
-    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (file && file.type.startsWith('image/')) {
-            convertFileToDataUrl(file);
-        }
-    };
-
-    const convertFileToDataUrl = (file: File) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            const dataUrl = e.target?.result as string;
-            setFormData({ ...formData, image_url: dataUrl });
-            setImagePreview(dataUrl);
-        };
-        reader.readAsDataURL(file);
-    };
-
-    const clearImage = () => {
-        setFormData({ ...formData, image_url: '' });
-        setImagePreview(null);
-        if (fileInputRef.current) {
-            fileInputRef.current.value = '';
         }
     };
 
@@ -228,57 +177,6 @@ export function ProductList() {
                         </div>
 
                         <form onSubmit={handleSubmit}>
-                            {/* Image Upload Section */}
-                            <div className="form-group">
-                                <label className="form-label">Product Image</label>
-                                <div
-                                    className={`image-upload-area ${dragOver ? 'drag-over' : ''}`}
-                                    onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                                    onDragLeave={() => setDragOver(false)}
-                                    onDrop={handleFileDrop}
-                                    onClick={() => fileInputRef.current?.click()}
-                                >
-                                    {imagePreview ? (
-                                        <div className="image-preview-container">
-                                            <img src={imagePreview} alt="Preview" className="image-preview" />
-                                            <button
-                                                type="button"
-                                                className="image-remove-btn"
-                                                onClick={(e) => { e.stopPropagation(); clearImage(); }}
-                                            >
-                                                ✕
-                                            </button>
-                                        </div>
-                                    ) : (
-                                        <div className="image-upload-placeholder">
-                                            <span className="upload-icon">📷</span>
-                                            <p>Drag & drop an image here</p>
-                                            <p className="upload-hint">or click to browse</p>
-                                        </div>
-                                    )}
-                                </div>
-                                <input
-                                    ref={fileInputRef}
-                                    type="file"
-                                    accept="image/*"
-                                    onChange={handleFileSelect}
-                                    style={{ display: 'none' }}
-                                />
-
-                                <div style={{ marginTop: 'var(--space-sm)' }}>
-                                    <label className="form-label" style={{ fontSize: 'var(--text-sm)', color: 'var(--color-text-secondary)' }}>
-                                        Or paste image URL:
-                                    </label>
-                                    <input
-                                        type="url"
-                                        className="form-input"
-                                        value={formData.image_url.startsWith('data:') ? '' : formData.image_url}
-                                        onChange={(e) => handleImageUrlChange(e.target.value)}
-                                        placeholder="https://example.com/image.jpg"
-                                    />
-                                </div>
-                            </div>
-
                             <div className="form-group">
                                 <label className="form-label">Product Name *</label>
                                 <input

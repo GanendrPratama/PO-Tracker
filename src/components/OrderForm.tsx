@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import QRCode from 'qrcode';
 import { invoke } from '@tauri-apps/api/core';
-import { useProducts, usePreOrders, useSmtpSettings, useCurrency } from '../hooks/useDatabase';
+import { useProducts, usePreOrders, useSmtpSettings, useCurrency, useInvoiceTemplate } from '../hooks/useDatabase';
 import { useGoogleAuthContext } from '../contexts/GoogleAuthContext';
-import { Product } from '../types';
+import { Product, InvoiceSection } from '../types';
 
 interface OrderFormProps {
     onOrderCreated?: () => void;
@@ -16,6 +16,7 @@ export function OrderForm({ onOrderCreated }: OrderFormProps) {
     const { settings: smtpSettings } = useSmtpSettings();
     const { auth, isAuthenticated, getAccessToken } = useGoogleAuthContext();
     const { formatCurrency } = useCurrency();
+    const { template } = useInvoiceTemplate();
 
     const [customerName, setCustomerName] = useState('');
     const [customerEmail, setCustomerEmail] = useState('');
@@ -114,6 +115,68 @@ export function OrderForm({ onOrderCreated }: OrderFormProps) {
             })
             .join('');
 
+        // Build sections based on template configuration
+        const enabledSections = template.sections
+            .filter(s => s.enabled)
+            .sort((a, b) => a.order - b.order);
+
+        const renderSection = (section: InvoiceSection): string => {
+            switch (section.type) {
+                case 'header':
+                    const headerStyle = template.use_banner_image && template.banner_image_url
+                        ? `background-image: url(${template.banner_image_url}); background-size: cover; background-position: center;`
+                        : `background: linear-gradient(135deg, ${template.primary_color}, ${template.secondary_color});`;
+                    return `
+                        <div class="header" style="${headerStyle} color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+                          <h1 style="margin: 0; text-shadow: 0 1px 3px rgba(0,0,0,0.3);">🧾 ${template.header_title}</h1>
+                          <p style="margin: 10px 0 0 0; opacity: 0.9; text-shadow: 0 1px 2px rgba(0,0,0,0.3);">${template.header_subtitle}</p>
+                        </div>`;
+                case 'greeting':
+                    return `
+                        <p>Dear <strong>${createdOrder?.customerName}</strong>,</p>
+                        <p>Thank you for your pre-order. Please find your order details below:</p>`;
+                case 'qr_code':
+                    return `
+                        <div class="code-box" style="background: white; border: 2px dashed ${template.primary_color}; padding: 20px; text-align: center; margin: 20px 0; border-radius: 10px;">
+                          <p style="margin: 0 0 10px 0; color: #6b7280;">Your Confirmation Code:</p>
+                          <div style="text-align: center; margin: 10px 0;">
+                              <img src="${qrCodeUrl}" alt="QR Code" width="150" height="150" />
+                          </div>
+                          <div class="code" style="font-size: 32px; font-weight: bold; color: ${template.primary_color}; letter-spacing: 4px; font-family: monospace;">${createdOrder?.code}</div>
+                          <p style="margin: 10px 0 0 0; color: #6b7280; font-size: 14px;">Present this code to confirm your order pickup</p>
+                        </div>`;
+                case 'items_table':
+                    return `
+                        <table style="width: 100%; border-collapse: collapse; margin: 20px 0; background: white;">
+                          <thead>
+                            <tr>
+                              <th style="background: #f3f4f6; padding: 12px; text-align: left; font-weight: 600;">Product</th>
+                              <th style="background: #f3f4f6; padding: 12px; text-align: center; font-weight: 600;">Qty</th>
+                              <th style="background: #f3f4f6; padding: 12px; text-align: right; font-weight: 600;">Price</th>
+                              <th style="background: #f3f4f6; padding: 12px; text-align: right; font-weight: 600;">Subtotal</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            ${itemsHtml}
+                          </tbody>
+                        </table>`;
+                case 'total':
+                    return `
+                        <div style="text-align: right; padding: 20px; background: white; border-radius: 10px;">
+                          <span class="total" style="font-size: 24px; font-weight: bold; color: ${template.primary_color};">Total: ${formatCurrency(createdOrder?.total || 0)}</span>
+                        </div>`;
+                case 'footer':
+                    return `
+                        <div class="footer" style="text-align: center; padding: 20px; color: #6b7280; font-size: 14px;">
+                          <p>${template.footer_text}</p>
+                        </div>`;
+                default:
+                    return '';
+            }
+        };
+
+        const sectionsHtml = enabledSections.map(renderSection).join('');
+
         return `
         <!DOCTYPE html>
         <html>
@@ -121,61 +184,18 @@ export function OrderForm({ onOrderCreated }: OrderFormProps) {
           <style>
             body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
             .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background: linear-gradient(135deg, #6366f1, #a855f7); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
             .content { background: #f9fafb; padding: 30px; border: 1px solid #e5e7eb; }
-            .code-box { background: white; border: 2px dashed #6366f1; padding: 20px; text-align: center; margin: 20px 0; border-radius: 10px; }
-            .code { font-size: 32px; font-weight: bold; color: #6366f1; letter-spacing: 4px; font-family: monospace; }
-            table { width: 100%; border-collapse: collapse; margin: 20px 0; background: white; }
-            th { background: #f3f4f6; padding: 12px; text-align: left; font-weight: 600; }
-            .total { font-size: 24px; font-weight: bold; color: #6366f1; }
-            .footer { text-align: center; padding: 20px; color: #6b7280; font-size: 14px; }
           </style>
         </head>
         <body>
           <div class="container">
-            <div class="header">
-              <h1 style="margin: 0;">🧾 Pre-Order Invoice</h1>
-              <p style="margin: 10px 0 0 0; opacity: 0.9;">Thank you for your order!</p>
-            </div>
-            <div class="content">
-              <p>Dear <strong>${createdOrder?.customerName}</strong>,</p>
-              <p>Thank you for your pre-order. Please find your order details below:</p>
-              
-              <div class="code-box">
-                <p style="margin: 0 0 10px 0; color: #6b7280;">Your Confirmation Code:</p>
-                <div style="text-align: center; margin: 10px 0;">
-                    <img src="${qrCodeUrl}" alt="QR Code" width="150" height="150" />
-                </div>
-                <div class="code">${createdOrder?.code}</div>
-                <p style="margin: 10px 0 0 0; color: #6b7280; font-size: 14px;">Present this code to confirm your order pickup</p>
-              </div>
-              
-              <table>
-                <thead>
-                  <tr>
-                    <th>Product</th>
-                    <th style="text-align: center;">Qty</th>
-                    <th style="text-align: right;">Price</th>
-                    <th style="text-align: right;">Subtotal</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${itemsHtml}
-                </tbody>
-              </table>
-              
-              <div style="text-align: right; padding: 20px; background: white; border-radius: 10px;">
-                <span class="total">Total: ${formatCurrency(createdOrder?.total || 0)}</span>
-              </div>
-            </div>
-            <div class="footer">
-              <p>This is an automated email from POTracker</p>
-            </div>
+            ${sectionsHtml}
           </div>
         </body>
         </html>
       `;
     };
+
 
     const sendEmail = async () => {
         if (!createdOrder) {

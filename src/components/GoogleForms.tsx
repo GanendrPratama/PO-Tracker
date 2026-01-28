@@ -146,10 +146,10 @@ export function GoogleForms() {
                 productsJson: JSON.stringify(productsToUse)
             });
 
-            // Add questions with ordered products
-            const questions = productsToUse.map(p => {
+            // Upload product images and build questions with Drive URLs
+            const questions = [];
+            for (const p of productsToUse) {
                 // Build description with prices
-                // Format: Price: IDR 150,000 / USD 10.00
                 const baseCurrency = p.currency_code || 'USD';
                 const priceStrs = [`${baseCurrency} ${p.price.toLocaleString()}`];
 
@@ -160,13 +160,54 @@ export function GoogleForms() {
                 }
                 const description = `Price: ${priceStrs.join(' / ')}`;
 
-                return {
+                let imageUrl = '';
+
+                // If product has an image URL, check if it's a local asset that needs uploading
+                if (p.image_url) {
+                    if (p.image_url.startsWith('asset://') || p.image_url.startsWith('https://asset.localhost/')) {
+                        // Local image - need to upload to Drive
+                        try {
+                            // Read the local file and convert to base64
+                            const response = await fetch(p.image_url);
+                            const blob = await response.blob();
+                            const arrayBuffer = await blob.arrayBuffer();
+                            const base64 = btoa(
+                                new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+                            );
+
+                            // Get mime type
+                            const mimeType = blob.type || 'image/png';
+                            const ext = mimeType.split('/')[1] || 'png';
+                            const imageName = `${p.name.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.${ext}`;
+
+                            // Upload to Drive
+                            const driveUrl: string = await invoke('upload_product_image', {
+                                accessToken,
+                                projectFolderId: formResponse.projectFolderId,
+                                imageName,
+                                imageDataBase64: base64,
+                                mimeType
+                            });
+
+                            imageUrl = driveUrl;
+                            console.log(`Uploaded image for ${p.name}: ${driveUrl}`);
+                        } catch (imgError) {
+                            console.error(`Failed to upload image for ${p.name}:`, imgError);
+                        }
+                    } else if (p.image_url.startsWith('http://') || p.image_url.startsWith('https://')) {
+                        // Remote URL - use directly (Forms can handle these)
+                        imageUrl = p.image_url;
+                    }
+                }
+
+                questions.push({
                     name: p.name,
                     price: p.price,
-                    description_override: description, // Pass to Rust to use this instead of auto-generated
-                    id: p.id
-                };
-            });
+                    description_override: description,
+                    id: p.id,
+                    image_url: imageUrl
+                });
+            }
 
             await invoke('add_form_questions', {
                 accessToken,

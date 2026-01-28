@@ -771,3 +771,103 @@ export function useCurrency() {
         currencyLocale: settings.currency_locale || 'en-US'
     };
 }
+
+// Default invoice template
+const DEFAULT_INVOICE_TEMPLATE = {
+    sections: [
+        { id: 'header', type: 'header' as const, label: 'Header', enabled: true, order: 0 },
+        { id: 'greeting', type: 'greeting' as const, label: 'Greeting', enabled: true, order: 1 },
+        { id: 'qr_code', type: 'qr_code' as const, label: 'QR Code & Confirmation', enabled: true, order: 2 },
+        { id: 'items_table', type: 'items_table' as const, label: 'Items Table', enabled: true, order: 3 },
+        { id: 'total', type: 'total' as const, label: 'Total Amount', enabled: true, order: 4 },
+        { id: 'footer', type: 'footer' as const, label: 'Footer', enabled: true, order: 5 }
+    ],
+    header_title: 'Pre-Order Invoice',
+    header_subtitle: 'Thank you for your order!',
+    footer_text: 'This is an automated email from POTracker',
+    primary_color: '#6366f1',
+    secondary_color: '#a855f7',
+    use_banner_image: false,
+    banner_image_url: ''
+};
+
+// Invoice Template hooks
+export function useInvoiceTemplate() {
+    const [template, setTemplate] = useState(DEFAULT_INVOICE_TEMPLATE);
+    const [loading, setLoading] = useState(true);
+
+    const loadTemplate = useCallback(async () => {
+        try {
+            const database = await getDatabase();
+
+            // Create table if not exists
+            await database.execute(`
+                CREATE TABLE IF NOT EXISTS invoice_templates (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    sections TEXT NOT NULL,
+                    header_title TEXT DEFAULT 'Pre-Order Invoice',
+                    header_subtitle TEXT DEFAULT 'Thank you for your order!',
+                    footer_text TEXT DEFAULT 'This is an automated email from POTracker',
+                    primary_color TEXT DEFAULT '#6366f1',
+                    secondary_color TEXT DEFAULT '#a855f7',
+                    use_banner_image INTEGER DEFAULT 0,
+                    banner_image_url TEXT DEFAULT ''
+                )
+            `);
+
+            // Migration: add banner columns if they don't exist
+            try {
+                await database.execute('ALTER TABLE invoice_templates ADD COLUMN use_banner_image INTEGER DEFAULT 0');
+                await database.execute('ALTER TABLE invoice_templates ADD COLUMN banner_image_url TEXT DEFAULT ""');
+            } catch { /* Columns might already exist */ }
+
+            const result = await database.select<any[]>('SELECT * FROM invoice_templates WHERE id = 1');
+
+            if (result[0]) {
+                setTemplate({
+                    sections: JSON.parse(result[0].sections),
+                    header_title: result[0].header_title,
+                    header_subtitle: result[0].header_subtitle,
+                    footer_text: result[0].footer_text,
+                    primary_color: result[0].primary_color,
+                    secondary_color: result[0].secondary_color,
+                    use_banner_image: !!result[0].use_banner_image,
+                    banner_image_url: result[0].banner_image_url || ''
+                });
+            }
+        } catch (error) {
+            console.error('Failed to load invoice template:', error);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        loadTemplate();
+    }, [loadTemplate]);
+
+    const saveTemplate = async (newTemplate: typeof DEFAULT_INVOICE_TEMPLATE) => {
+        const database = await getDatabase();
+        await database.execute(
+            `INSERT OR REPLACE INTO invoice_templates (id, sections, header_title, header_subtitle, footer_text, primary_color, secondary_color, use_banner_image, banner_image_url)
+             VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                JSON.stringify(newTemplate.sections),
+                newTemplate.header_title,
+                newTemplate.header_subtitle,
+                newTemplate.footer_text,
+                newTemplate.primary_color,
+                newTemplate.secondary_color,
+                newTemplate.use_banner_image ? 1 : 0,
+                newTemplate.banner_image_url || ''
+            ]
+        );
+        setTemplate(newTemplate);
+    };
+
+    const resetToDefault = async () => {
+        await saveTemplate(DEFAULT_INVOICE_TEMPLATE);
+    };
+
+    return { template, loading, saveTemplate, resetToDefault, reload: loadTemplate };
+}
