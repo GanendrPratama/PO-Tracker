@@ -132,6 +132,17 @@ export function ProductList() {
                                     </div>
                                 </div>
                                 <div className="product-card-content">
+                                    {product.unique_id && (
+                                        <div style={{
+                                            fontFamily: 'monospace',
+                                            fontSize: 'var(--text-xs)',
+                                            color: 'var(--color-text-muted)',
+                                            marginBottom: '2px',
+                                            letterSpacing: '0.5px'
+                                        }}>
+                                            {product.unique_id}
+                                        </div>
+                                    )}
                                     <h3 className="product-card-name">{product.name}</h3>
                                     {product.description && (
                                         <p className="product-card-description">{product.description}</p>

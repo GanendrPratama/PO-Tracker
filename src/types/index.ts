@@ -20,6 +20,7 @@ export interface ProductPrice {
 
 export interface Product {
     id?: number;
+    unique_id?: string;
     name: string;
     description?: string;
     price: number;
@@ -144,5 +145,5 @@ export interface InvoiceTemplate {
     banner_image_url: string;
 }
 
-export type View = 'dashboard' | 'products' | 'new-order' | 'confirm' | 'settings' | 'google-forms' | 'events';
+export type View = 'dashboard' | 'products' | 'new-order' | 'confirm' | 'settings' | 'google-forms' | 'events' | 'orders';
 

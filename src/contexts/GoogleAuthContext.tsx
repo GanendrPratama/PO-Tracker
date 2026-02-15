@@ -98,6 +98,69 @@ export function GoogleAuthProvider({ children }: GoogleAuthProviderProps) {
         await loadAuth();
     };
 
+    // Refresh the access token using the stored refresh token
+    const refreshAccessToken = useCallback(async (currentAuth: GoogleAuth): Promise<boolean> => {
+        if (!currentAuth.refresh_token || currentAuth.auth_mode === 'api_key') {
+            return false;
+        }
+
+        try {
+            console.log('Refreshing access token...');
+            const tokenResponse: any = await invoke('refresh_google_token', {
+                refreshToken: currentAuth.refresh_token,
+                clientId: GOOGLE_CLIENT_ID,
+                clientSecret: GOOGLE_CLIENT_SECRET,
+            });
+
+            const newExpiry = new Date(Date.now() + tokenResponse.expires_in * 1000).toISOString();
+
+            const database = await getDatabase();
+            await database.execute(
+                'UPDATE google_auth SET access_token = ?, token_expiry = ? WHERE id = 1',
+                [tokenResponse.access_token, newExpiry]
+            );
+            await loadAuth();
+            console.log('Access token refreshed successfully, expires at', newExpiry);
+            return true;
+        } catch (error) {
+            console.error('Failed to refresh access token:', error);
+            return false;
+        }
+    }, [loadAuth]);
+
+    // Check if token needs refresh (expired or expiring within 5 minutes)
+    const isTokenExpiringSoon = useCallback((authData: GoogleAuth): boolean => {
+        if (!authData.token_expiry || authData.auth_mode === 'api_key') return false;
+        const expiryTime = new Date(authData.token_expiry).getTime();
+        const fiveMinutesFromNow = Date.now() + 5 * 60 * 1000;
+        return expiryTime <= fiveMinutesFromNow;
+    }, []);
+
+    // Auto-refresh on load and set up periodic refresh
+    useEffect(() => {
+        if (!auth || auth.auth_mode === 'api_key' || !auth.refresh_token) return;
+
+        // Check immediately on load
+        if (isTokenExpiringSoon(auth)) {
+            refreshAccessToken(auth);
+        }
+
+        // Set up periodic check every 4 minutes
+        const interval = setInterval(() => {
+            // Re-read auth from state at interval time
+            setAuth(currentAuth => {
+                if (currentAuth && currentAuth.auth_mode !== 'api_key' && currentAuth.refresh_token) {
+                    if (isTokenExpiringSoon(currentAuth)) {
+                        refreshAccessToken(currentAuth);
+                    }
+                }
+                return currentAuth;
+            });
+        }, 4 * 60 * 1000);
+
+        return () => clearInterval(interval);
+    }, [auth?.token_expiry, auth?.auth_mode, refreshAccessToken, isTokenExpiringSoon]);
+
     const startAuth = async () => {
         if (!GOOGLE_CLIENT_ID) {
             throw new Error('Google OAuth is not configured. Please set VITE_GOOGLE_CLIENT_ID environment variable.');

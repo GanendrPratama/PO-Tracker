@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { useInvoiceTemplate } from '../hooks/useDatabase';
 import { InvoiceSection } from '../types';
-import { pickAndSaveImage, getImageUrlType } from '../utils/imageStorage';
+import Cropper, { Area } from 'react-easy-crop';
+import { getImageUrlType, pickImage, saveImageFromBuffer } from '../utils/imageStorage';
 
 interface InvoiceEditorProps {
     onClose: () => void;
@@ -14,6 +15,85 @@ export function InvoiceEditor({ onClose }: InvoiceEditorProps) {
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
     const dragItem = useRef<number | null>(null);
     const dragOverItem = useRef<number | null>(null);
+
+    // Cropper State
+    const [croppingImage, setCroppingImage] = useState<string | null>(null);
+    const [crop, setCrop] = useState({ x: 0, y: 0 });
+    const [zoom, setZoom] = useState(1);
+    const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
+
+    const onCropComplete = (_croppedArea: Area, croppedAreaPixels: Area) => {
+        setCroppedAreaPixels(croppedAreaPixels);
+    };
+
+    const handleBrowseClick = async () => {
+        try {
+            const imageUrl = await pickImage();
+            if (imageUrl) {
+                setCroppingImage(imageUrl);
+                setZoom(1);
+                setCrop({ x: 0, y: 0 });
+            }
+        } catch (error) {
+            console.error('Failed to pick image:', error);
+            setMessage({ type: 'error', text: 'Failed to pick image' });
+        }
+    };
+
+    const handleApplyCrop = async () => {
+        if (!croppingImage || !croppedAreaPixels) return;
+
+        try {
+            const image = new Image();
+            image.src = croppingImage;
+            await new Promise((resolve) => { image.onload = resolve; });
+
+            const canvas = document.createElement('canvas');
+            canvas.width = croppedAreaPixels.width;
+            canvas.height = croppedAreaPixels.height;
+            const ctx = canvas.getContext('2d');
+
+            if (!ctx) return;
+
+            ctx.drawImage(
+                image,
+                croppedAreaPixels.x,
+                croppedAreaPixels.y,
+                croppedAreaPixels.width,
+                croppedAreaPixels.height,
+                0,
+                0,
+                croppedAreaPixels.width,
+                croppedAreaPixels.height
+            );
+
+            canvas.toBlob(async (blob) => {
+                if (!blob) return;
+
+                // Convert to Base64 for reliable display and storage
+                const reader = new FileReader();
+                reader.readAsDataURL(blob);
+                reader.onloadend = async () => {
+                    const base64data = reader.result as string;
+
+                    // Still save to file to respect "local copy" requirement and for potential future use
+                    const buffer = await blob.arrayBuffer();
+                    await saveImageFromBuffer(new Uint8Array(buffer), `banner_${Date.now()}.png`);
+
+                    // Use Base64 for the template
+                    setLocalTemplate({ ...localTemplate, banner_image_url: base64data });
+                    setCroppingImage(null);
+                    setMessage({ type: 'success', text: 'Banner updated!' });
+                    setTimeout(() => setMessage(null), 2000);
+                };
+            }, 'image/png');
+
+        } catch (error) {
+            console.error('Failed to apply crop:', error);
+            setMessage({ type: 'error', text: 'Failed to save cropped image' });
+        }
+    };
+
 
     // Sync local state with loaded template when it changes
     useEffect(() => {
@@ -272,17 +352,7 @@ export function InvoiceEditor({ onClose }: InvoiceEditorProps) {
                                         <button
                                             type="button"
                                             className="btn btn-secondary"
-                                            onClick={async () => {
-                                                try {
-                                                    const imageUrl = await pickAndSaveImage();
-                                                    if (imageUrl) {
-                                                        setLocalTemplate({ ...localTemplate, banner_image_url: imageUrl });
-                                                    }
-                                                } catch (error) {
-                                                    console.error('Failed to pick image:', error);
-                                                    setMessage({ type: 'error', text: 'Failed to upload image' });
-                                                }
-                                            }}
+                                            onClick={handleBrowseClick}
                                         >
                                             📁 Browse
                                         </button>
@@ -397,6 +467,49 @@ export function InvoiceEditor({ onClose }: InvoiceEditorProps) {
                     </div>
                 )}
             </div>
+            {croppingImage && (
+                <div className="modal-overlay" style={{ zIndex: 2000 }} onClick={(e) => e.stopPropagation()}>
+                    <div className="modal" style={{ width: '90%', maxWidth: '600px', height: '80vh', display: 'flex', flexDirection: 'column' }}>
+                        <div className="modal-header">
+                            <h3 className="modal-title">✂️ Crop Banner Image</h3>
+                        </div>
+                        <div style={{ position: 'relative', flex: 1, background: '#333' }}>
+                            <Cropper
+                                image={croppingImage}
+                                crop={crop}
+                                zoom={zoom}
+                                aspect={4 / 1} // Banner aspect ratio
+                                onCropChange={setCrop}
+                                onCropComplete={onCropComplete}
+                                onZoomChange={setZoom}
+                            />
+                        </div>
+                        <div style={{ padding: 'var(--space-md)' }}>
+                            <div style={{ marginBottom: 'var(--space-md)' }}>
+                                <label style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>Zoom</label>
+                                <input
+                                    type="range"
+                                    value={zoom}
+                                    min={1}
+                                    max={3}
+                                    step={0.1}
+                                    aria-labelledby="Zoom"
+                                    onChange={(e) => setZoom(Number(e.target.value))}
+                                    style={{ width: '100%' }}
+                                />
+                            </div>
+                            <div className="btn-group" style={{ justifyContent: 'flex-end' }}>
+                                <button className="btn btn-secondary" onClick={() => setCroppingImage(null)}>
+                                    Cancel
+                                </button>
+                                <button className="btn btn-primary" onClick={handleApplyCrop}>
+                                    Apply Crop
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

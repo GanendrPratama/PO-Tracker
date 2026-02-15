@@ -1,0 +1,25 @@
+{
+  "name": "potracker-sync-microservice",
+  "version": "1.0.0",
+  "description": "Microservice for syncing Google Form responses with checksum-based optimization",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "keywords": [
+    "potracker",
+    "google-forms",
+    "sync"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "crypto-js": "^4.2.0",
+    "express": "^5.2.1",
+    "node-fetch": "^2.7.0",
+    "nodemailer": "^8.0.1"
+  }
+}

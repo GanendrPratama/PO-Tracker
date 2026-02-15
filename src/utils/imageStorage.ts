@@ -81,31 +81,91 @@ export async function pickAndSaveImage(): Promise<string | null> {
 }
 
 /**
+ * Pick an image from system dialog and save a copy locally
+ * @returns Asset URL for preview, or null if cancelled
+ */
+export async function pickImage(): Promise<string | null> {
+    try {
+        const selected = await open({
+            multiple: false,
+            filters: [{
+                name: 'Images',
+                extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp']
+            }]
+        });
+
+        if (!selected) {
+            return null;
+        }
+
+        const sourcePath = selected as string;
+
+        // Ensure images directory exists
+        await ensureImagesDir();
+
+        // Generate unique filename
+        const originalName = sourcePath.split(/[\\/]/).pop() || 'image.png';
+        const newFilename = generateFilename(originalName);
+
+        // Read source file
+        const imageData = await readFile(sourcePath);
+
+        // Write to images directory (keep local copy as requested)
+        const imagesDir = await getImagesDir();
+        const destPath = await join(imagesDir, newFilename);
+        await writeFile(destPath, imageData);
+
+        // Return Base64 Data URI for reliable preview in Cropper
+        const base64 = typeof Buffer !== 'undefined'
+            ? Buffer.from(imageData).toString('base64')
+            : arrayBufferToBase64(imageData);
+
+        return `data:image/${originalName.split('.').pop()};base64,${base64}`;
+    } catch (error) {
+        console.error('Failed to pick image:', error);
+        throw error;
+    }
+}
+
+function arrayBufferToBase64(buffer: Uint8Array): string {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return window.btoa(binary);
+}
+
+/**
+ * Save an image from a buffer (e.g. from canvas)
+ */
+export async function saveImageFromBuffer(buffer: Uint8Array, originalName: string = 'cropped.png'): Promise<string> {
+    try {
+        await ensureImagesDir();
+        const newFilename = generateFilename(originalName);
+        const imagesDir = await getImagesDir();
+        const destPath = await join(imagesDir, newFilename);
+
+        await writeFile(destPath, buffer);
+
+        return convertFileSrc(destPath);
+    } catch (error) {
+        console.error('Failed to save image from buffer:', error);
+        throw error;
+    }
+}
+
+/**
  * Save an image from a File object (e.g., from drag-and-drop)
  * @param file The File object to save
  * @returns Asset URL that can be used in img src
  */
 export async function saveImageFromFile(file: File): Promise<string> {
     try {
-        // Ensure images directory exists
-        await ensureImagesDir();
-
-        // Generate unique filename
-        const newFilename = generateFilename(file.name);
-
-        // Read file as ArrayBuffer
         const arrayBuffer = await file.arrayBuffer();
         const uint8Array = new Uint8Array(arrayBuffer);
-
-        // Write to images directory
-        const imagesDir = await getImagesDir();
-        const destPath = await join(imagesDir, newFilename);
-        await writeFile(destPath, uint8Array);
-
-        // Convert to asset URL for use in webview
-        const assetUrl = convertFileSrc(destPath);
-
-        return assetUrl;
+        return await saveImageFromBuffer(uint8Array, file.name);
     } catch (error) {
         console.error('Failed to save image from file:', error);
         throw error;

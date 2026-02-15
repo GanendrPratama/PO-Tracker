@@ -124,6 +124,20 @@ export async function getDatabase(): Promise<Database> {
         try {
             await db.execute('ALTER TABLE products ADD COLUMN currency_code TEXT DEFAULT "USD"');
         } catch { /* Column might already exist */ }
+
+        // Add unique_id column to products
+        try {
+            await db.execute('ALTER TABLE products ADD COLUMN unique_id TEXT');
+        } catch { /* Column might already exist */ }
+
+        // Backfill unique_ids for existing products that don't have one
+        try {
+            const productsWithoutUid = await db.select<{ id: number }[]>('SELECT id FROM products WHERE unique_id IS NULL');
+            for (const p of productsWithoutUid) {
+                const uid = 'PRD-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+                await db.execute('UPDATE products SET unique_id = ? WHERE id = ?', [uid, p.id]);
+            }
+        } catch { /* Ignore backfill errors */ }
     }
     return db;
 }
@@ -161,9 +175,10 @@ export function useProducts() {
 
     const addProduct = async (product: Omit<Product, 'id' | 'created_at'>) => {
         const database = await getDatabase();
+        const uniqueId = product.unique_id || ('PRD-' + Math.random().toString(36).substring(2, 10).toUpperCase());
         const result = await database.execute(
-            'INSERT INTO products (name, description, price, currency_code, image_url, event_id) VALUES (?, ?, ?, ?, ?, ?)',
-            [product.name, product.description || null, product.price, product.currency_code || 'USD', product.image_url || null, product.event_id || null]
+            'INSERT INTO products (name, description, price, currency_code, image_url, event_id, unique_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [product.name, product.description || null, product.price, product.currency_code || 'USD', product.image_url || null, product.event_id || null, uniqueId]
         );
 
         const productId = result.lastInsertId;
@@ -212,9 +227,9 @@ export function useProducts() {
 }
 
 // Pre-orders hooks
-export function usePreOrders() {
+export function usePreOrders(options: { autoLoad?: boolean } = { autoLoad: true }) {
     const [orders, setOrders] = useState<PreOrder[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(options.autoLoad);
 
     const loadOrders = useCallback(async () => {
         try {
@@ -229,8 +244,10 @@ export function usePreOrders() {
     }, []);
 
     useEffect(() => {
-        loadOrders();
-    }, [loadOrders]);
+        if (options.autoLoad) {
+            loadOrders();
+        }
+    }, [loadOrders, options.autoLoad]);
 
     const createOrder = async (
         customerName: string,
