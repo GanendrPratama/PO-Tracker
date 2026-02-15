@@ -55,10 +55,8 @@ export function OrderList() {
     }, [selectedOrder, closeModal]);
 
     const handleDelete = async (id: number) => {
-        if (window.confirm('Are you sure you want to delete this order? This action cannot be undone.')) {
-            await deleteOrder(id);
-            if (selectedOrder?.id === id) closeModal();
-        }
+        await deleteOrder(id);
+        if (selectedOrder?.id === id) closeModal();
     };
 
     const handleStatusChange = async (id: number, newStatus: string) => {

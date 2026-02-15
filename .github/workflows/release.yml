@@ -12,21 +12,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest, ubuntu-22.04, windows-latest]
+        platform: [macos-latest, windows-latest]
     runs-on: ${{ matrix.platform }}
     environment: PO-Tracker
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Install dependencies (Ubuntu only)
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev build-essential curl wget libssl-dev file flatpak flatpak-builder
-          flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo
-          flatpak install --user -y flathub org.gnome.Platform//46 org.gnome.Sdk//46 org.freedesktop.Sdk.Extension.rust-stable//24.08
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -63,15 +55,30 @@ jobs:
           prerelease: false
           args: ${{ matrix.platform == 'macos-latest' && '--target universal-apple-darwin' || '' }}
 
-      - name: Build Flatpak (Ubuntu only)
-        if: matrix.platform == 'ubuntu-22.04'
+  flatpak:
+    permissions:
+      contents: write
+    runs-on: ubuntu-22.04
+    environment: PO-Tracker
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev build-essential curl wget libssl-dev file flatpak flatpak-builder
+          flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y flathub org.gnome.Platform//46 org.gnome.Sdk//46 org.freedesktop.Sdk.Extension.rust-stable//24.08
+
+      - name: Build Flatpak
         run: |
           flatpak-builder --user --install-deps-from=flathub --force-clean build-dir com.ganendr.potracker.yml
           flatpak build-export repo build-dir
           flatpak build-bundle repo POTracker.flatpak com.ganendr.potracker
 
       - name: Upload Flatpak to Release
-        if: matrix.platform == 'ubuntu-22.04'
         uses: softprops/action-gh-release@v1
         with:
           files: POTracker.flatpak
