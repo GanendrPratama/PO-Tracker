@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { invoke } from '@tauri-apps/api/core';
-import { usePreOrders, useSmtpSettings, useCurrency } from '../hooks/useDatabase';
+import { usePreOrders, useSmtpSettings, useCurrency, useInvoiceTemplate } from '../hooks/useDatabase';
 import { useGoogleAuthContext } from '../contexts/GoogleAuthContext';
 import { PreOrder } from '../types';
 
@@ -194,7 +194,30 @@ export function ConfirmOrder() {
         setScannerActive(false);
     };
 
+    const { template } = useInvoiceTemplate();
+
     const generateConfirmedEmailHtml = (customerName: string, orderCode: string) => {
+        // Prepare Header Style (simple version for confirmation, matching invoice style)
+        let headerStyle = `padding: 30px; text-align: center; border-radius: 10px 10px 0 0; color: white;`;
+        if (template.use_banner_image && template.banner_image_url) {
+            headerStyle += `background-color: ${template.primary_color};`;
+        } else {
+            headerStyle += `background: linear-gradient(135deg, #10b981, #059669);`; // Keep green theme for confirmation but allow banner
+        }
+
+        const bannerHtml = (template.use_banner_image && template.banner_image_url)
+            ? `<div style="text-align: center; background-color: ${template.primary_color}; border-radius: 10px 10px 0 0; overflow: hidden;">
+                 <img src="${template.banner_image_url}" alt="Banner" style="width: 100%; max-height: 200px; object-fit: cover; display: block;" />
+                 <div style="margin-top: -60px; padding-bottom: 20px; position: relative;">
+                    <h1 style="margin: 0; text-shadow: 0 2px 4px rgba(0,0,0,0.5); color: white;">✅ Order Confirmed</h1>
+                    <p style="margin: 5px 0 0 0; opacity: 0.9; text-shadow: 0 1px 2px rgba(0,0,0,0.5); color: white;">Your order has been successfully picked up!</p>
+                 </div>
+               </div>`
+            : `<div class="header" style="${headerStyle}">
+                  <h1 style="margin: 0;">✅ Order Confirmed</h1>
+                  <p style="margin: 10px 0 0 0; opacity: 0.9;">Your order has been successfully picked up!</p>
+               </div>`;
+
         return `
         <!DOCTYPE html>
         <html>
@@ -202,18 +225,14 @@ export function ConfirmOrder() {
           <style>
             body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
             .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background: linear-gradient(135deg, #10b981, #059669); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-            .content { background: #f9fafb; padding: 30px; border: 1px solid #e5e7eb; }
+            .content { background: #f9fafb; padding: 30px; border: 1px solid #e5e7eb; border-top: none; }
             .order-info { background: white; border-left: 4px solid #10b981; padding: 15px; margin: 20px 0; }
             .footer { text-align: center; padding: 20px; color: #6b7280; font-size: 14px; }
           </style>
         </head>
         <body>
           <div class="container">
-            <div class="header">
-              <h1 style="margin: 0;">✅ Order Confirmed</h1>
-              <p style="margin: 10px 0 0 0; opacity: 0.9;">Your order has been successfully picked up!</p>
-            </div>
+            ${bannerHtml}
             <div class="content">
               <p>Dear <strong>${customerName}</strong>,</p>
               <p>This email is to confirm that your order <strong>${orderCode}</strong> has been successfully processed and picked up.</p>
@@ -226,7 +245,7 @@ export function ConfirmOrder() {
               <p>Thank you for your business!</p>
             </div>
             <div class="footer">
-              <p>This is an automated email from POTracker</p>
+              <p>${template.footer_text}</p>
             </div>
           </div>
         </body>

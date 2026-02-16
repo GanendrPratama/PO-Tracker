@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=POTracker
+Comment=Pre-Order Tracking Application
+Exec=potracker
+Icon=com.ganendr.potracker
+Terminal=false
+Type=Application
+Categories=Office;Utility;
+StartupWMClass=potracker

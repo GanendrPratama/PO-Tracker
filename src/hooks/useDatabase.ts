@@ -124,6 +124,20 @@ export async function getDatabase(): Promise<Database> {
         try {
             await db.execute('ALTER TABLE products ADD COLUMN currency_code TEXT DEFAULT "USD"');
         } catch { /* Column might already exist */ }
+
+        // Add unique_id column to products
+        try {
+            await db.execute('ALTER TABLE products ADD COLUMN unique_id TEXT');
+        } catch { /* Column might already exist */ }
+
+        // Backfill unique_ids for existing products that don't have one
+        try {
+            const productsWithoutUid = await db.select<{ id: number }[]>('SELECT id FROM products WHERE unique_id IS NULL');
+            for (const p of productsWithoutUid) {
+                const uid = 'PRD-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+                await db.execute('UPDATE products SET unique_id = ? WHERE id = ?', [uid, p.id]);
+            }
+        } catch { /* Ignore backfill errors */ }
     }
     return db;
 }
@@ -161,9 +175,10 @@ export function useProducts() {
 
     const addProduct = async (product: Omit<Product, 'id' | 'created_at'>) => {
         const database = await getDatabase();
+        const uniqueId = product.unique_id || ('PRD-' + Math.random().toString(36).substring(2, 10).toUpperCase());
         const result = await database.execute(
-            'INSERT INTO products (name, description, price, currency_code, image_url, event_id) VALUES (?, ?, ?, ?, ?, ?)',
-            [product.name, product.description || null, product.price, product.currency_code || 'USD', product.image_url || null, product.event_id || null]
+            'INSERT INTO products (name, description, price, currency_code, image_url, event_id, unique_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [product.name, product.description || null, product.price, product.currency_code || 'USD', product.image_url || null, product.event_id || null, uniqueId]
         );
 
         const productId = result.lastInsertId;
@@ -212,9 +227,9 @@ export function useProducts() {
 }
 
 // Pre-orders hooks
-export function usePreOrders() {
+export function usePreOrders(options: { autoLoad?: boolean } = { autoLoad: true }) {
     const [orders, setOrders] = useState<PreOrder[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(options.autoLoad);
 
     const loadOrders = useCallback(async () => {
         try {
@@ -229,8 +244,10 @@ export function usePreOrders() {
     }, []);
 
     useEffect(() => {
-        loadOrders();
-    }, [loadOrders]);
+        if (options.autoLoad) {
+            loadOrders();
+        }
+    }, [loadOrders, options.autoLoad]);
 
     const createOrder = async (
         customerName: string,
@@ -770,4 +787,104 @@ export function useCurrency() {
         currencyCode: settings.currency_code || 'USD',
         currencyLocale: settings.currency_locale || 'en-US'
     };
+}
+
+// Default invoice template
+const DEFAULT_INVOICE_TEMPLATE = {
+    sections: [
+        { id: 'header', type: 'header' as const, label: 'Header', enabled: true, order: 0 },
+        { id: 'greeting', type: 'greeting' as const, label: 'Greeting', enabled: true, order: 1 },
+        { id: 'qr_code', type: 'qr_code' as const, label: 'QR Code & Confirmation', enabled: true, order: 2 },
+        { id: 'items_table', type: 'items_table' as const, label: 'Items Table', enabled: true, order: 3 },
+        { id: 'total', type: 'total' as const, label: 'Total Amount', enabled: true, order: 4 },
+        { id: 'footer', type: 'footer' as const, label: 'Footer', enabled: true, order: 5 }
+    ],
+    header_title: 'Pre-Order Invoice',
+    header_subtitle: 'Thank you for your order!',
+    footer_text: 'This is an automated email from POTracker',
+    primary_color: '#6366f1',
+    secondary_color: '#a855f7',
+    use_banner_image: false,
+    banner_image_url: ''
+};
+
+// Invoice Template hooks
+export function useInvoiceTemplate() {
+    const [template, setTemplate] = useState(DEFAULT_INVOICE_TEMPLATE);
+    const [loading, setLoading] = useState(true);
+
+    const loadTemplate = useCallback(async () => {
+        try {
+            const database = await getDatabase();
+
+            // Create table if not exists
+            await database.execute(`
+                CREATE TABLE IF NOT EXISTS invoice_templates (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    sections TEXT NOT NULL,
+                    header_title TEXT DEFAULT 'Pre-Order Invoice',
+                    header_subtitle TEXT DEFAULT 'Thank you for your order!',
+                    footer_text TEXT DEFAULT 'This is an automated email from POTracker',
+                    primary_color TEXT DEFAULT '#6366f1',
+                    secondary_color TEXT DEFAULT '#a855f7',
+                    use_banner_image INTEGER DEFAULT 0,
+                    banner_image_url TEXT DEFAULT ''
+                )
+            `);
+
+            // Migration: add banner columns if they don't exist
+            try {
+                await database.execute('ALTER TABLE invoice_templates ADD COLUMN use_banner_image INTEGER DEFAULT 0');
+                await database.execute('ALTER TABLE invoice_templates ADD COLUMN banner_image_url TEXT DEFAULT ""');
+            } catch { /* Columns might already exist */ }
+
+            const result = await database.select<any[]>('SELECT * FROM invoice_templates WHERE id = 1');
+
+            if (result[0]) {
+                setTemplate({
+                    sections: JSON.parse(result[0].sections),
+                    header_title: result[0].header_title,
+                    header_subtitle: result[0].header_subtitle,
+                    footer_text: result[0].footer_text,
+                    primary_color: result[0].primary_color,
+                    secondary_color: result[0].secondary_color,
+                    use_banner_image: !!result[0].use_banner_image,
+                    banner_image_url: result[0].banner_image_url || ''
+                });
+            }
+        } catch (error) {
+            console.error('Failed to load invoice template:', error);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        loadTemplate();
+    }, [loadTemplate]);
+
+    const saveTemplate = async (newTemplate: typeof DEFAULT_INVOICE_TEMPLATE) => {
+        const database = await getDatabase();
+        await database.execute(
+            `INSERT OR REPLACE INTO invoice_templates (id, sections, header_title, header_subtitle, footer_text, primary_color, secondary_color, use_banner_image, banner_image_url)
+             VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                JSON.stringify(newTemplate.sections),
+                newTemplate.header_title,
+                newTemplate.header_subtitle,
+                newTemplate.footer_text,
+                newTemplate.primary_color,
+                newTemplate.secondary_color,
+                newTemplate.use_banner_image ? 1 : 0,
+                newTemplate.banner_image_url || ''
+            ]
+        );
+        setTemplate(newTemplate);
+    };
+
+    const resetToDefault = async () => {
+        await saveTemplate(DEFAULT_INVOICE_TEMPLATE);
+    };
+
+    return { template, loading, saveTemplate, resetToDefault, reload: loadTemplate };
 }

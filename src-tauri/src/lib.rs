@@ -50,6 +50,17 @@ pub struct GoogleFormResponse {
     pub info: GoogleFormInfo,
 }
 
+// Extended response for create_google_form that includes folder ID
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateFormResult {
+    #[serde(rename = "formId")]
+    pub form_id: String,
+    #[serde(rename = "responderUri")]
+    pub responder_uri: String,
+    #[serde(rename = "projectFolderId")]
+    pub project_folder_id: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GoogleFormInfo {
     pub title: String,
@@ -707,12 +718,194 @@ async fn read_drive_file(access_token: String, file_id: String) -> Result<String
     Ok(content)
 }
 
+// Helper: Upload binary file to Drive
+async fn upload_binary_to_drive(
+    client: &Client,
+    access_token: &str,
+    name: &str,
+    data: &[u8],
+    mime_type: &str,
+    parent_id: Option<&str>,
+) -> Result<String, String> {
+    use reqwest::multipart;
+
+    let mut parents = Vec::new();
+    if let Some(pid) = parent_id {
+        parents.push(pid);
+    }
+    
+    let metadata = serde_json::json!({
+        "name": name,
+        "parents": parents
+    });
+    
+    let form = multipart::Form::new()
+        .part("metadata", multipart::Part::text(metadata.to_string())
+            .mime_str("application/json; charset=UTF-8").unwrap())
+        .part("media", multipart::Part::bytes(data.to_vec())
+            .mime_str(mime_type).unwrap());
+            
+    let response = client
+        .post("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart")
+        .bearer_auth(access_token)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to upload binary file: {}", e))?;
+        
+    if !response.status().is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("Drive API upload error: {}", error_text));
+    }
+    
+    let file: DriveFile = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse uploaded file: {}", e))?;
+        
+    Ok(file.id)
+}
+
+// Helper: Make file publicly viewable (required for Google Forms to display images)
+async fn make_file_public(
+    client: &Client,
+    access_token: &str,
+    file_id: &str,
+) -> Result<(), String> {
+    let body = serde_json::json!({
+        "role": "reader",
+        "type": "anyone"
+    });
+    
+    let response = client
+        .post(format!("https://www.googleapis.com/drive/v3/files/{}/permissions", file_id))
+        .bearer_auth(access_token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to set permissions: {}", e))?;
+        
+    if !response.status().is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("Drive API permission error: {}", error_text));
+    }
+    
+    Ok(())
+}
+
+// Helper: Find folder inside parent by name
+async fn find_folder_in_parent(
+    client: &Client, 
+    access_token: &str, 
+    name: &str, 
+    parent_id: &str
+) -> Result<Option<String>, String> {
+    let query = format!(
+        "mimeType='application/vnd.google-apps.folder' and name='{}' and '{}' in parents and trashed=false",
+        name, parent_id
+    );
+    
+    let response = client
+        .get("https://www.googleapis.com/drive/v3/files")
+        .query(&[("q", query.as_str())])
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to search folder: {}", e))?;
+        
+    if !response.status().is_success() {
+        return Err(format!("Drive API error: {}", response.status()));
+    }
+    
+    let list: DriveFileList = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse file list: {}", e))?;
+        
+    Ok(list.files.first().map(|f| f.id.clone()))
+}
+
+// Helper: Create folder inside parent
+async fn create_folder_in_parent(
+    client: &Client, 
+    access_token: &str, 
+    name: &str, 
+    parent_id: &str
+) -> Result<String, String> {
+    let body = serde_json::json!({
+        "name": name,
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": [parent_id]
+    });
+    
+    let response = client
+        .post("https://www.googleapis.com/drive/v3/files")
+        .bearer_auth(access_token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to create folder: {}", e))?;
+        
+    if !response.status().is_success() {
+        return Err(format!("Drive API create error: {}", response.status()));
+    }
+    
+    let file: DriveFile = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse created folder: {}", e))?;
+        
+    Ok(file.id)
+}
+
+// Upload a product image to Google Drive and return public URL
+#[tauri::command]
+async fn upload_product_image(
+    access_token: String,
+    project_folder_id: String,
+    image_name: String,
+    image_data_base64: String,
+    mime_type: String,
+) -> Result<String, String> {
+    let client = Client::new();
+    
+    // Decode base64 image data
+    let image_bytes = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        &image_data_base64
+    ).map_err(|e| format!("Failed to decode image: {}", e))?;
+    
+    // Find or create images folder inside project folder
+    let images_folder_id = match find_folder_in_parent(&client, &access_token, "images", &project_folder_id).await? {
+        Some(id) => id,
+        None => create_folder_in_parent(&client, &access_token, "images", &project_folder_id).await?
+    };
+    
+    // Upload the image
+    let file_id = upload_binary_to_drive(
+        &client,
+        &access_token,
+        &image_name,
+        &image_bytes,
+        &mime_type,
+        Some(&images_folder_id)
+    ).await?;
+    
+    // Make the image publicly viewable
+    make_file_public(&client, &access_token, &file_id).await?;
+    
+    // Return the public URL that Google Forms can use
+    let public_url = format!("https://drive.google.com/uc?id={}", file_id);
+    
+    Ok(public_url)
+}
+
 #[tauri::command]
 async fn create_google_form(
     access_token: String,
     title: String,
     products_json: Option<String>,
-) -> Result<GoogleFormResponse, String> {
+) -> Result<CreateFormResult, String> {
     let client = Client::new();
     
     // 1. Ensure "po-tracker" root folder exists
@@ -767,7 +960,12 @@ async fn create_google_form(
         }
     }
     
-    Ok(form)
+    // Return result with folder ID for image uploads
+    Ok(CreateFormResult {
+        form_id: form.form_id,
+        responder_uri: form.responder_uri,
+        project_folder_id,
+    })
 }
 
 #[tauri::command]
@@ -905,8 +1103,9 @@ async fn add_form_questions(
         }),
     ];
     
-    // Add product quantity questions
-    for (idx, question) in questions.iter().enumerate() {
+    // Add product quantity questions (with optional images)
+    let mut current_index = 2; // Start after name and email
+    for question in questions.iter() {
         // Use override if available, otherwise fallback to default formatting
         let description = if let Some(desc) = question["description_override"].as_str() {
             desc.to_string()
@@ -914,6 +1113,27 @@ async fn add_form_questions(
             format!("Price: ${:.2}", question["price"].as_f64().unwrap_or(0.0))
         };
 
+        // If product has an image URL, add an image item first
+        if let Some(image_url) = question["image_url"].as_str() {
+            if !image_url.is_empty() {
+                requests.push(serde_json::json!({
+                    "createItem": {
+                        "item": {
+                            "title": question["name"].as_str().unwrap_or("Product"),
+                            "imageItem": {
+                                "image": {
+                                    "sourceUri": image_url
+                                }
+                            }
+                        },
+                        "location": { "index": current_index }
+                    }
+                }));
+                current_index += 1;
+            }
+        }
+
+        // Add the quantity question
         requests.push(serde_json::json!({
             "createItem": {
                 "item": {
@@ -928,9 +1148,10 @@ async fn add_form_questions(
                         }
                     }
                 },
-                "location": { "index": idx + 2 }
+                "location": { "index": current_index }
             }
         }));
+        current_index += 1;
     }
     
     let body = serde_json::json!({
@@ -1046,6 +1267,7 @@ pub fn run() {
             scan_project_folders,
             delete_drive_file,
             read_drive_file,
+            upload_product_image,
             add_form_questions,
             get_form_responses,
             get_form_details

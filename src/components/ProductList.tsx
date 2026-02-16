@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { useProducts, useCurrency, useEvents } from '../hooks/useDatabase';
 import { Product } from '../types';
 
@@ -13,17 +13,12 @@ export function ProductList() {
         description: string;
         price: string;
         currency_code: string;
-        image_url: string;
         event_id: string;
         prices: { currency_code: string; price: string }[];
     }>({
-        name: '', description: '', price: '', currency_code: 'USD', image_url: '', event_id: '', prices: []
+        name: '', description: '', price: '', currency_code: 'USD', event_id: '', prices: []
     });
-    const [imagePreview, setImagePreview] = useState<string | null>(null);
-    const [dragOver, setDragOver] = useState(false);
-    const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
-    const [deleting, setDeleting] = useState(false);
-    const fileInputRef = useRef<HTMLInputElement>(null);
+    const [deleting, setDeleting] = useState<number | null>(null);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -38,7 +33,6 @@ export function ProductList() {
             description: formData.description,
             price,
             currency_code: formData.currency_code || 'USD',
-            image_url: formData.image_url || undefined,
             event_id: formData.event_id ? parseInt(formData.event_id) : undefined,
             prices
         };
@@ -55,9 +49,8 @@ export function ProductList() {
     const openAddModal = () => {
         setEditingProduct(null);
         setFormData({
-            name: '', description: '', price: '', currency_code: 'USD', image_url: '', event_id: '', prices: []
+            name: '', description: '', price: '', currency_code: 'USD', event_id: '', prices: []
         });
-        setImagePreview(null);
         setShowModal(true);
     };
 
@@ -68,72 +61,26 @@ export function ProductList() {
             description: product.description || '',
             price: product.price.toString(),
             currency_code: product.currency_code || 'USD',
-            image_url: product.image_url || '',
             event_id: product.event_id ? product.event_id.toString() : '',
             prices: product.prices
                 ? product.prices.map(p => ({ currency_code: p.currency_code, price: p.price.toString() }))
                 : []
         });
-        setImagePreview(product.image_url || null);
         setShowModal(true);
     };
 
     const closeModal = () => {
         setShowModal(false);
         setEditingProduct(null);
-        setFormData({ name: '', description: '', price: '', currency_code: 'USD', image_url: '', event_id: '', prices: [] });
-        setImagePreview(null);
+        setFormData({ name: '', description: '', price: '', currency_code: 'USD', event_id: '', prices: [] });
     };
 
     const handleDelete = async (id: number) => {
-        setDeleting(true);
+        setDeleting(id);
         try {
             await deleteProduct(id);
         } finally {
-            setDeleting(false);
-            setDeleteConfirmId(null);
-        }
-    };
-
-
-
-    const handleImageUrlChange = (url: string) => {
-        setFormData({ ...formData, image_url: url });
-        setImagePreview(url);
-    };
-
-    const handleFileDrop = (e: React.DragEvent) => {
-        e.preventDefault();
-        setDragOver(false);
-
-        const file = e.dataTransfer.files[0];
-        if (file && file.type.startsWith('image/')) {
-            convertFileToDataUrl(file);
-        }
-    };
-
-    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (file && file.type.startsWith('image/')) {
-            convertFileToDataUrl(file);
-        }
-    };
-
-    const convertFileToDataUrl = (file: File) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            const dataUrl = e.target?.result as string;
-            setFormData({ ...formData, image_url: dataUrl });
-            setImagePreview(dataUrl);
-        };
-        reader.readAsDataURL(file);
-    };
-
-    const clearImage = () => {
-        setFormData({ ...formData, image_url: '' });
-        setImagePreview(null);
-        if (fileInputRef.current) {
-            fileInputRef.current.value = '';
+            setDeleting(null);
         }
     };
 
@@ -185,6 +132,17 @@ export function ProductList() {
                                     </div>
                                 </div>
                                 <div className="product-card-content">
+                                    {product.unique_id && (
+                                        <div style={{
+                                            fontFamily: 'monospace',
+                                            fontSize: 'var(--text-xs)',
+                                            color: 'var(--color-text-muted)',
+                                            marginBottom: '2px',
+                                            letterSpacing: '0.5px'
+                                        }}>
+                                            {product.unique_id}
+                                        </div>
+                                    )}
                                     <h3 className="product-card-name">{product.name}</h3>
                                     {product.description && (
                                         <p className="product-card-description">{product.description}</p>
@@ -206,10 +164,11 @@ export function ProductList() {
                                     </button>
                                     <button
                                         className="btn btn-icon"
-                                        onClick={() => product.id && setDeleteConfirmId(product.id)}
+                                        onClick={() => product.id && handleDelete(product.id)}
                                         title="Delete"
+                                        disabled={deleting === product.id}
                                     >
-                                        🗑️
+                                        {deleting === product.id ? '⏳' : '🗑️'}
                                     </button>
                                 </div>
                             </div>
@@ -229,57 +188,6 @@ export function ProductList() {
                         </div>
 
                         <form onSubmit={handleSubmit}>
-                            {/* Image Upload Section */}
-                            <div className="form-group">
-                                <label className="form-label">Product Image</label>
-                                <div
-                                    className={`image-upload-area ${dragOver ? 'drag-over' : ''}`}
-                                    onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                                    onDragLeave={() => setDragOver(false)}
-                                    onDrop={handleFileDrop}
-                                    onClick={() => fileInputRef.current?.click()}
-                                >
-                                    {imagePreview ? (
-                                        <div className="image-preview-container">
-                                            <img src={imagePreview} alt="Preview" className="image-preview" />
-                                            <button
-                                                type="button"
-                                                className="image-remove-btn"
-                                                onClick={(e) => { e.stopPropagation(); clearImage(); }}
-                                            >
-                                                ✕
-                                            </button>
-                                        </div>
-                                    ) : (
-                                        <div className="image-upload-placeholder">
-                                            <span className="upload-icon">📷</span>
-                                            <p>Drag & drop an image here</p>
-                                            <p className="upload-hint">or click to browse</p>
-                                        </div>
-                                    )}
-                                </div>
-                                <input
-                                    ref={fileInputRef}
-                                    type="file"
-                                    accept="image/*"
-                                    onChange={handleFileSelect}
-                                    style={{ display: 'none' }}
-                                />
-
-                                <div style={{ marginTop: 'var(--space-sm)' }}>
-                                    <label className="form-label" style={{ fontSize: 'var(--text-sm)', color: 'var(--color-text-secondary)' }}>
-                                        Or paste image URL:
-                                    </label>
-                                    <input
-                                        type="url"
-                                        className="form-input"
-                                        value={formData.image_url.startsWith('data:') ? '' : formData.image_url}
-                                        onChange={(e) => handleImageUrlChange(e.target.value)}
-                                        placeholder="https://example.com/image.jpg"
-                                    />
-                                </div>
-                            </div>
-
                             <div className="form-group">
                                 <label className="form-label">Product Name *</label>
                                 <input
@@ -406,28 +314,6 @@ export function ProductList() {
                 </div>
             )}
 
-            {/* Delete Confirmation Modal */}
-            {deleteConfirmId != null && (
-                <div className="modal-overlay" onClick={() => setDeleteConfirmId(null)}>
-                    <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '400px' }}>
-                        <div className="modal-header">
-                            <h3 className="modal-title">⚠️ Delete Product</h3>
-                            <button className="modal-close" onClick={() => setDeleteConfirmId(null)}>×</button>
-                        </div>
-                        <p style={{ marginBottom: 'var(--space-lg)', color: 'var(--color-text-secondary)' }}>
-                            Are you sure you want to delete this product? This action cannot be undone.
-                        </p>
-                        <div className="btn-group" style={{ justifyContent: 'flex-end' }}>
-                            <button className="btn btn-secondary" onClick={() => setDeleteConfirmId(null)} disabled={deleting}>
-                                Cancel
-                            </button>
-                            <button className="btn btn-danger" onClick={() => handleDelete(deleteConfirmId)} disabled={deleting}>
-                                {deleting ? '⏳ Deleting...' : '🗑️ Delete'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

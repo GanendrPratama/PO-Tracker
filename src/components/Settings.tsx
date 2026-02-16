@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useSmtpSettings, useAppSettings } from '../hooks/useDatabase';
 import { useGoogleAuthContext } from '../contexts/GoogleAuthContext';
+import { InvoiceEditor } from './InvoiceEditor';
 
 export function Settings() {
     const { settings, loading, saveSettings } = useSmtpSettings();
@@ -29,6 +30,7 @@ export function Settings() {
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
     const [showPassword, setShowPassword] = useState(false);
     const [showSmtpConfig, setShowSmtpConfig] = useState(false);
+    const [showInvoiceEditor, setShowInvoiceEditor] = useState(false);
 
     // Auth modal state
     // Auth modal state - REMOVED (Automatic flow used)
@@ -446,6 +448,28 @@ export function Settings() {
                 </div>
             </div>
 
+            {/* Invoice Template Card */}
+            <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
+                <h3 className="card-title" style={{ marginBottom: 'var(--space-lg)' }}>
+                    📧 Invoice Template
+                </h3>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                        <p style={{ marginBottom: 'var(--space-xs)' }}>Customize your invoice email template</p>
+                        <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--text-sm)' }}>
+                            Drag and drop sections, change colors, and edit text
+                        </p>
+                    </div>
+                    <button
+                        className="btn btn-primary"
+                        onClick={() => setShowInvoiceEditor(true)}
+                    >
+                        ✏️ Edit Template
+                    </button>
+                </div>
+            </div>
+
             {/* Camera Settings Card */}
             <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
                 <h3 className="card-title" style={{ marginBottom: 'var(--space-lg)' }}>
@@ -620,6 +644,11 @@ export function Settings() {
                 <div className={`toast ${message.type}`}>
                     {message.type === 'success' ? '✅' : '❌'} {message.text}
                 </div>
+            )}
+
+            {/* Invoice Editor Modal */}
+            {showInvoiceEditor && (
+                <InvoiceEditor onClose={() => setShowInvoiceEditor(false)} />
             )}
         </div>
     );

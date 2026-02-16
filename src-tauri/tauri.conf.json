@@ -23,7 +23,14 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "deb",
+      "rpm",
+      "dmg",
+      "app",
+      "nsis",
+      "msi"
+    ],
     "iOS": {
       "infoPlist": "Info.plist"
     },

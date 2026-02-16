@@ -1,31 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import QRCode from 'qrcode';
 import { useGoogleAuthContext } from '../contexts/GoogleAuthContext';
-import { useGoogleForms, useProducts, usePreOrders, useSmtpSettings, useEvents } from '../hooks/useDatabase';
+import { useGoogleForms, useProducts, useEvents } from '../hooks/useDatabase';
+import { useSync } from '../hooks/useSync';
 import { FormEditor } from './FormEditor';
 import { Product } from '../types';
 
-interface FormResponse {
-    responseId: string;
-    createTime: string;
-    answers?: Record<string, { questionId: string; textAnswers?: { answers: { value: string }[] } }>;
-}
 
-interface GoogleFormDetails {
-    formId: string;
-    items?: FormItem[];
-}
-
-interface FormItem {
-    itemId: string;
-    title?: string;
-    questionItem?: {
-        question: {
-            questionId: string;
-        }
-    }
-}
 
 interface ScannedProject {
     folder_id: string;
@@ -53,15 +34,17 @@ interface ScannedProject {
 
 export function GoogleForms() {
     const { auth, isAuthenticated, isConfigured, startAuth, signOut, getAccessToken, loading: authLoading } = useGoogleAuthContext();
-    const { forms, syncSettings, saveForm, updateLastSynced, saveSyncSettings, isResponseSynced, markResponseSynced, deleteForm, loading: formsLoading } = useGoogleForms();
-    const { products } = useProducts();
+    const { forms, saveForm, deleteForm, loading: formsLoading } = useGoogleForms();
+    const { products, addProduct } = useProducts();
     const { events } = useEvents();
-    const { createOrder } = usePreOrders();
-    const { settings: smtpSettings } = useSmtpSettings();
+    // smtpSettings moved to useSync
+
+    // Use the new sync hook
+    const { syncAllForms, syncing, message: syncMessage, syncSettings, saveSyncSettings } = useSync();
 
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
     const [creating, setCreating] = useState(false);
-    const [syncing, setSyncing] = useState(false);
+    // syncing state moved to useSync
     const [scanning, setScanning] = useState(false);
     const [showFormEditor, setShowFormEditor] = useState(false);
     const [orderedProducts, setOrderedProducts] = useState<Product[]>([]);
@@ -78,16 +61,15 @@ export function GoogleForms() {
         }
     }, [products, orderedProducts.length]);
 
-    // Auto-sync timer
+    // Auto-sync timer moved to useSync (or App.tsx, but checks suggested implementing in App.tsx or useSync)
+    // We'll remove it from here to avoid duplication if it's moved to App/global.
+
+    // Sync message effect
     useEffect(() => {
-        if (!syncSettings.auto_sync_enabled || !getAccessToken() || forms.length === 0) return;
-
-        const interval = setInterval(() => {
-            syncAllForms();
-        }, syncSettings.sync_interval_minutes * 60 * 1000);
-
-        return () => clearInterval(interval);
-    }, [syncSettings, auth, forms]);
+        if (syncMessage) {
+            setMessage(syncMessage);
+        }
+    }, [syncMessage]);
 
     const startGoogleAuth = async () => {
         try {
@@ -146,10 +128,10 @@ export function GoogleForms() {
                 productsJson: JSON.stringify(productsToUse)
             });
 
-            // Add questions with ordered products
-            const questions = productsToUse.map(p => {
+            // Upload product images and build questions with Drive URLs
+            const questions = [];
+            for (const p of productsToUse) {
                 // Build description with prices
-                // Format: Price: IDR 150,000 / USD 10.00
                 const baseCurrency = p.currency_code || 'USD';
                 const priceStrs = [`${baseCurrency} ${p.price.toLocaleString()}`];
 
@@ -160,13 +142,54 @@ export function GoogleForms() {
                 }
                 const description = `Price: ${priceStrs.join(' / ')}`;
 
-                return {
+                let imageUrl = '';
+
+                // If product has an image URL, check if it's a local asset that needs uploading
+                if (p.image_url) {
+                    if (p.image_url.startsWith('asset://') || p.image_url.startsWith('https://asset.localhost/')) {
+                        // Local image - need to upload to Drive
+                        try {
+                            // Read the local file and convert to base64
+                            const response = await fetch(p.image_url);
+                            const blob = await response.blob();
+                            const arrayBuffer = await blob.arrayBuffer();
+                            const base64 = btoa(
+                                new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+                            );
+
+                            // Get mime type
+                            const mimeType = blob.type || 'image/png';
+                            const ext = mimeType.split('/')[1] || 'png';
+                            const imageName = `${p.name.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.${ext}`;
+
+                            // Upload to Drive
+                            const driveUrl: string = await invoke('upload_product_image', {
+                                accessToken,
+                                projectFolderId: formResponse.projectFolderId,
+                                imageName,
+                                imageDataBase64: base64,
+                                mimeType
+                            });
+
+                            imageUrl = driveUrl;
+                            console.log(`Uploaded image for ${p.name}: ${driveUrl}`);
+                        } catch (imgError) {
+                            console.error(`Failed to upload image for ${p.name}:`, imgError);
+                        }
+                    } else if (p.image_url.startsWith('http://') || p.image_url.startsWith('https://')) {
+                        // Remote URL - use directly (Forms can handle these)
+                        imageUrl = p.image_url;
+                    }
+                }
+
+                questions.push({
                     name: p.name,
                     price: p.price,
-                    description_override: description, // Pass to Rust to use this instead of auto-generated
-                    id: p.id
-                };
-            });
+                    description_override: description,
+                    id: p.id,
+                    image_url: imageUrl
+                });
+            }
 
             await invoke('add_form_questions', {
                 accessToken,
@@ -233,19 +256,52 @@ export function GoogleForms() {
         }
     };
 
-    // View products in a project
-    const handleViewProjectProducts = (proj: ScannedProject) => {
+    // Import products from a cloud project into the local database
+    const handleImportProjectProducts = async (proj: ScannedProject) => {
         if (!proj.products_json) {
-            alert('No product data found for this project.');
+            setMessage({ type: 'error', text: 'No product data found for this project.' });
             return;
         }
         try {
-            const products: Product[] = JSON.parse(proj.products_json);
-            console.log("Project Products:", products);
-            // Could show a modal here, for now just alert count
-            alert(`Project "${proj.name}" has ${products.length} configured products.\n\n(Check console for details)`);
+            const cloudProducts: Product[] = JSON.parse(proj.products_json);
+            if (cloudProducts.length === 0) {
+                setMessage({ type: 'error', text: 'No products found in cloud project.' });
+                return;
+            }
+
+            // Check for existing products by name to avoid duplicates
+            const existingNames = new Set(products.map(p => p.name.toLowerCase()));
+            let importedCount = 0;
+            let skippedCount = 0;
+
+            for (const cp of cloudProducts) {
+                if (existingNames.has(cp.name.toLowerCase())) {
+                    skippedCount++;
+                    continue;
+                }
+                await addProduct({
+                    name: cp.name,
+                    description: cp.description,
+                    price: cp.price,
+                    currency_code: cp.currency_code || 'USD',
+                    image_url: cp.image_url,
+                    event_id: cp.event_id,
+                    prices: cp.prices || []
+                });
+                importedCount++;
+            }
+
+            if (importedCount > 0) {
+                setMessage({
+                    type: 'success',
+                    text: `Imported ${importedCount} product(s) from "${proj.name}"${skippedCount > 0 ? ` (${skippedCount} skipped as duplicates)` : ''}`
+                });
+            } else {
+                setMessage({ type: 'success', text: `All ${skippedCount} product(s) already exist locally.` });
+            }
         } catch (e) {
-            alert('Failed to parse product data.');
+            console.error('Failed to import products:', e);
+            setMessage({ type: 'error', text: `Failed to import products: ${e}` });
         }
     };
 
@@ -276,267 +332,11 @@ export function GoogleForms() {
         setMessage({ type: 'success', text: 'Form layout updated!' });
     };
 
-    const syncFormResponses = async (formId: string) => {
-        const accessToken = getAccessToken();
-        if (!accessToken) return;
-
-        try {
-            // 1. Get form definition to map Question IDs
-            const formDetails: GoogleFormDetails = await invoke('get_form_details', {
-                accessToken,
-                formId
-            });
-
-            // Build Question ID maps
-            const nameQuestionId = formDetails.items?.find(i => i.title === 'Your Name')?.questionItem?.question.questionId;
-            const emailQuestionId = formDetails.items?.find(i => i.title === 'Your Email')?.questionItem?.question.questionId;
-
-            // Map: QuestionID -> ProductName
-            const productQuestionMap = new Map<string, string>(); // ID -> Name
-
-            formDetails.items?.forEach(item => {
-                if (item.title?.startsWith('Quantity: ') && item.questionItem) {
-                    const productName = item.title.replace('Quantity: ', '').trim();
-                    productQuestionMap.set(item.questionItem.question.questionId, productName);
-                }
-            });
-
-            // 2. Get responses
-            const responsesData: any = await invoke('get_form_responses', {
-                accessToken,
-                formId
-            });
-
-            if (!responsesData.responses) return 0;
-
-            let imported = 0;
-
-            for (const response of responsesData.responses as FormResponse[]) {
-                // Check if already synced
-                const alreadySynced = await isResponseSynced(response.responseId);
-                if (alreadySynced) continue;
-
-                const answers = response.answers || {};
-
-                // Extract customer info using mapped IDs
-                let customerName = 'Unknown';
-                let customerEmail = 'unknown@email.com';
-
-                if (nameQuestionId && answers[nameQuestionId]?.textAnswers?.answers[0]?.value) {
-                    customerName = answers[nameQuestionId].textAnswers!.answers[0].value;
-                }
-
-                if (emailQuestionId && answers[emailQuestionId]?.textAnswers?.answers[0]?.value) {
-                    customerEmail = answers[emailQuestionId].textAnswers!.answers[0].value;
-                }
-
-                // Extract products
-                const items: { productId: number; quantity: number; unitPrice: number }[] = [];
-                let totalAmount = 0;
-
-                // Iterate over all answers to find product quantities
-                for (const [questionId, answer] of Object.entries(answers)) {
-                    if (productQuestionMap.has(questionId)) {
-                        const productName = productQuestionMap.get(questionId);
-                        const product = products.find(p => p.name === productName);
-
-                        if (product) {
-                            const quantityStr = answer.textAnswers?.answers[0]?.value || '0';
-                            const quantity = parseInt(quantityStr) || 0;
-
-                            if (quantity > 0) {
-                                items.push({
-                                    productId: product.id!,
-                                    quantity,
-                                    unitPrice: product.price
-                                });
-                                totalAmount += product.price * quantity;
-                            }
-                        }
-                    }
-                }
-
-                if (items.length > 0) {
-                    // Generate confirmation code
-                    const confirmationCode: string = await invoke('generate_confirmation_code');
-
-                    // Create order
-                    await createOrder(
-                        customerName,
-                        customerEmail,
-                        confirmationCode,
-                        totalAmount,
-                        `Imported from Google Form on ${new Date().toLocaleString()}`,
-                        items
-                    );
-
-                    // Send Email
-                    try {
-                        const qrCodeUrl = await QRCode.toDataURL(confirmationCode);
-                        const htmlBody = generateEmailHtml(customerName, confirmationCode, items, totalAmount, qrCodeUrl);
-                        const subject = `Pre-Order Invoice - ${confirmationCode}`;
-
-                        if (isAuthenticated && accessToken && auth?.user_email) {
-                            await invoke('send_gmail_email', {
-                                accessToken,
-                                toEmail: customerEmail,
-                                toName: customerName,
-                                fromEmail: auth.user_email,
-                                fromName: auth.user_name || 'POTracker',
-                                subject,
-                                htmlBody
-                            });
-                            console.log(`Sent invoice email to ${customerEmail} via Gmail`);
-                        } else if (smtpSettings) {
-                            await invoke('send_invoice_email', {
-                                smtpSettings: smtpSettings,
-                                toEmail: customerEmail,
-                                toName: customerName,
-                                subject,
-                                htmlBody
-                            });
-                            console.log(`Sent invoice email to ${customerEmail} via SMTP`);
-                        }
-                    } catch (emailError) {
-                        console.error('Failed to send invoice email:', emailError);
-                        // Don't fail the sync - just log error
-                        setMessage({ type: 'error', text: `Order created but email failed: ${emailError}` });
-                    }
-
-                    imported++;
-                }
-
-                // Mark as synced
-                await markResponseSynced(response.responseId, formId);
-            }
-
-            return imported;
-        } catch (error) {
-            console.error('Failed to sync responses:', error);
-            throw error;
-        }
-    };
-
-    const syncAllForms = useCallback(async () => {
-        const accessToken = getAccessToken();
-        if (!accessToken || syncing) return;
-
-        setSyncing(true);
-        let totalImported = 0;
-
-        try {
-            for (const form of forms) {
-                const imported = await syncFormResponses(form.form_id);
-                await updateLastSynced(form.form_id);
-                totalImported += imported || 0;
-            }
-
-            if (totalImported > 0) {
-                setMessage({ type: 'success', text: `Imported ${totalImported} new order(s)!` });
-            } else {
-                setMessage({ type: 'success', text: 'No new responses to import' });
-            }
-        } catch (error) {
-            setMessage({ type: 'error', text: `Sync failed: ${error}` });
-        } finally {
-            setSyncing(false);
-        }
-    }, [auth, forms, syncing]);
+    // formatCurrency and generateEmailHtml removed (moved to useSync)
 
     const formatDate = (dateStr: string | undefined) => {
         if (!dateStr) return 'Never';
         return new Date(dateStr).toLocaleString();
-    };
-
-    const formatCurrency = (amount: number) => {
-        return new Intl.NumberFormat('en-US', {
-            style: 'currency',
-            currency: 'USD'
-        }).format(amount);
-    };
-
-    const generateEmailHtml = (
-        customerName: string,
-        code: string,
-        items: { productId: number; quantity: number; unitPrice: number }[],
-        total: number,
-        qrCodeUrl: string
-    ) => {
-        const itemsHtml = items
-            .map((item) => {
-                const product = products.find(p => p.id === item.productId);
-                const productName = product ? product.name : 'Unknown Product';
-                const subtotal = item.unitPrice * item.quantity;
-                return `<tr>
-            <td style="padding: 12px; border-bottom: 1px solid #eee;">${productName}</td>
-            <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: center;">${item.quantity}</td>
-            <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: right;">${formatCurrency(item.unitPrice)}</td>
-            <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: right;">${formatCurrency(subtotal)}</td>
-          </tr>`;
-            })
-            .join('');
-
-        return `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <style>
-            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background: linear-gradient(135deg, #6366f1, #a855f7); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-            .content { background: #f9fafb; padding: 30px; border: 1px solid #e5e7eb; }
-            .code-box { background: white; border: 2px dashed #6366f1; padding: 20px; text-align: center; margin: 20px 0; border-radius: 10px; }
-            .code { font-size: 32px; font-weight: bold; color: #6366f1; letter-spacing: 4px; font-family: monospace; }
-            table { width: 100%; border-collapse: collapse; margin: 20px 0; background: white; }
-            th { background: #f3f4f6; padding: 12px; text-align: left; font-weight: 600; }
-            .total { font-size: 24px; font-weight: bold; color: #6366f1; }
-            .footer { text-align: center; padding: 20px; color: #6b7280; font-size: 14px; }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <div class="header">
-              <h1 style="margin: 0;">🧾 Pre-Order Invoice</h1>
-              <p style="margin: 10px 0 0 0; opacity: 0.9;">Thank you for your order!</p>
-            </div>
-            <div class="content">
-              <p>Dear <strong>${customerName}</strong>,</p>
-              <p>Thank you for your pre-order. Please find your order details below:</p>
-              
-              <div class="code-box">
-                <p style="margin: 0 0 10px 0; color: #6b7280;">Your Confirmation Code:</p>
-                <div style="text-align: center; margin: 10px 0;">
-                    <img src="${qrCodeUrl}" alt="QR Code" width="150" height="150" />
-                </div>
-                <div class="code">${code}</div>
-                <p style="margin: 10px 0 0 0; color: #6b7280; font-size: 14px;">Present this code to confirm your order pickup</p>
-              </div>
-              
-              <table>
-                <thead>
-                  <tr>
-                    <th>Product</th>
-                    <th style="text-align: center;">Qty</th>
-                    <th style="text-align: right;">Price</th>
-                    <th style="text-align: right;">Subtotal</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${itemsHtml}
-                </tbody>
-              </table>
-              
-              <div style="text-align: right; padding: 20px; background: white; border-radius: 10px;">
-                <span class="total">Total: ${formatCurrency(total)}</span>
-              </div>
-            </div>
-            <div class="footer">
-              <p>This is an automated email from POTracker</p>
-            </div>
-          </div>
-        </body>
-        </html>
-      `;
     };
 
     if (authLoading || formsLoading) {
@@ -707,11 +507,11 @@ export function GoogleForms() {
                                             <div className="btn-group">
                                                 {proj.products_json && (
                                                     <button
-                                                        className="btn btn-sm btn-secondary"
-                                                        onClick={() => handleViewProjectProducts(proj)}
-                                                        title="View Configured Products"
+                                                        className="btn btn-sm btn-primary"
+                                                        onClick={() => handleImportProjectProducts(proj)}
+                                                        title="Import Products to Local Database"
                                                     >
-                                                        👁️
+                                                        ⬇️ Import
                                                     </button>
                                                 )}
                                                 <button

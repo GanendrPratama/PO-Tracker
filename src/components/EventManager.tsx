@@ -20,8 +20,7 @@ export function EventManager({ onEventsChanged }: EventManagerProps) {
         end_date: ''
     });
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-    const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
-    const [deleting, setDeleting] = useState(false);
+    const [deleting, setDeleting] = useState<number | null>(null);
 
     const openCreateModal = () => {
         setEditingEvent(null);
@@ -71,14 +70,13 @@ export function EventManager({ onEventsChanged }: EventManagerProps) {
     };
 
     const handleDelete = async (id: number) => {
-        setDeleting(true);
+        setDeleting(id);
         try {
             await deleteEvent(id);
             setMessage({ type: 'success', text: 'Event deleted' });
             onEventsChanged?.();
         } finally {
-            setDeleting(false);
-            setDeleteConfirmId(null);
+            setDeleting(null);
         }
     };
 
@@ -203,10 +201,11 @@ export function EventManager({ onEventsChanged }: EventManagerProps) {
                                                 </button>
                                                 <button
                                                     className="btn btn-icon"
-                                                    onClick={() => setDeleteConfirmId(event.id!)}
+                                                    onClick={() => handleDelete(event.id!)}
                                                     style={{ color: 'var(--color-error)' }}
+                                                    disabled={deleting === event.id}
                                                 >
-                                                    🗑️
+                                                    {deleting === event.id ? '⏳' : '🗑️'}
                                                 </button>
                                             </div>
                                         </td>
@@ -305,28 +304,6 @@ export function EventManager({ onEventsChanged }: EventManagerProps) {
                 </div>
             )}
 
-            {/* Delete Confirmation Modal */}
-            {deleteConfirmId != null && (
-                <div className="modal-overlay" onClick={() => setDeleteConfirmId(null)}>
-                    <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '400px' }}>
-                        <div className="modal-header">
-                            <h3 className="modal-title">⚠️ Delete Event</h3>
-                            <button className="modal-close" onClick={() => setDeleteConfirmId(null)}>×</button>
-                        </div>
-                        <p style={{ marginBottom: 'var(--space-lg)', color: 'var(--color-text-secondary)' }}>
-                            Are you sure you want to delete this event? Products and orders will be unlinked.
-                        </p>
-                        <div className="btn-group" style={{ justifyContent: 'flex-end' }}>
-                            <button className="btn btn-secondary" onClick={() => setDeleteConfirmId(null)} disabled={deleting}>
-                                Cancel
-                            </button>
-                            <button className="btn btn-danger" onClick={() => handleDelete(deleteConfirmId)} disabled={deleting}>
-                                {deleting ? '⏳ Deleting...' : '🗑️ Delete'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

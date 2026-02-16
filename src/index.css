@@ -967,6 +967,7 @@ body {
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   }
 }
+
 /* Date Picker Overrides */
 .date-picker-wrapper {
   width: 100%;
@@ -1007,4 +1008,230 @@ body {
 
 .react-datepicker__day--disabled {
   color: var(--color-text-muted) !important;
+}
+
+/* Invoice Editor Styles */
+.invoice-sections-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.invoice-section-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: grab;
+  transition: all var(--transition-fast);
+}
+
+.invoice-section-item:active {
+  cursor: grabbing;
+}
+
+.invoice-section-item:hover {
+  border-color: var(--color-border-active);
+  background: var(--color-bg-hover);
+}
+
+.invoice-section-item.disabled {
+  opacity: 0.5;
+}
+
+.invoice-section-drag {
+  color: var(--color-text-muted);
+  font-size: var(--text-lg);
+  user-select: none;
+}
+
+.invoice-section-icon {
+  font-size: var(--text-lg);
+}
+
+.invoice-section-label {
+  flex: 1;
+  font-weight: 500;
+}
+
+/* Toggle Switch */
+.toggle-switch {
+  position: relative;
+  width: 44px;
+  height: 24px;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--color-bg-primary);
+  transition: var(--transition-fast);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+}
+
+.toggle-slider::before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 2px;
+  bottom: 2px;
+  background-color: var(--color-text-muted);
+  transition: var(--transition-fast);
+  border-radius: 50%;
+}
+
+.toggle-switch input:checked+.toggle-slider {
+  background-color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.toggle-switch input:checked+.toggle-slider::before {
+  transform: translateX(20px);
+  background-color: white;
+}
+
+/* Invoice Preview */
+.invoice-preview {
+  background: white;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.invoice-preview-section {
+  color: #333;
+}
+
+.preview-header {
+  padding: var(--space-lg);
+  text-align: center;
+  color: white;
+}
+
+.preview-header h2 {
+  margin: 0 0 var(--space-xs) 0;
+  font-size: var(--text-xl);
+}
+
+.preview-header p {
+  margin: 0;
+  opacity: 0.9;
+  font-size: var(--text-sm);
+}
+
+.preview-greeting {
+  padding: var(--space-md) var(--space-lg);
+  font-size: var(--text-sm);
+}
+
+.preview-greeting p {
+  margin: var(--space-xs) 0;
+}
+
+.preview-qr {
+  padding: var(--space-md) var(--space-lg);
+  display: flex;
+  justify-content: center;
+}
+
+.preview-qr-box {
+  border: 2px dashed;
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  text-align: center;
+}
+
+.preview-qr-box p {
+  margin: 0 0 var(--space-sm) 0;
+  font-size: var(--text-sm);
+  color: #666;
+}
+
+.preview-qr-placeholder {
+  width: 60px;
+  height: 60px;
+  background: #f3f4f6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto var(--space-sm);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  color: #999;
+}
+
+.preview-code {
+  font-family: var(--font-mono);
+  font-size: var(--text-lg);
+  font-weight: 700;
+  letter-spacing: 2px;
+}
+
+.preview-table {
+  padding: var(--space-sm) var(--space-lg);
+}
+
+.preview-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.preview-table th,
+.preview-table td {
+  padding: var(--space-sm);
+  text-align: left;
+  border-bottom: 1px solid #eee;
+}
+
+.preview-table th {
+  background: #f9fafb;
+  font-weight: 600;
+  font-size: var(--text-xs);
+}
+
+.preview-total {
+  padding: var(--space-md) var(--space-lg);
+  text-align: right;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.total-label {
+  font-weight: 500;
+}
+
+.total-amount {
+  font-size: var(--text-xl);
+  font-weight: 700;
+}
+
+.preview-footer {
+  padding: var(--space-md) var(--space-lg);
+  text-align: center;
+  color: #6b7280;
+  font-size: var(--text-xs);
+  border-top: 1px solid #eee;
+}
+
+.preview-footer p {
+  margin: 0;
 }

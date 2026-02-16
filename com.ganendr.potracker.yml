@@ -1,0 +1,32 @@
+app-id: com.ganendr.potracker
+runtime: org.gnome.Platform
+runtime-version: '46'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: potracker
+
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --device=dri
+  - --share=network
+  - --filesystem=home
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+
+modules:
+  - name: potracker
+    buildsystem: simple
+    build-commands:
+      - cargo build --release
+      - install -Dm755 target/release/tauri-app -t /app/bin/
+      - install -Dm644 icons/128x128.png /app/share/icons/hicolor/128x128/apps/com.ganendr.potracker.png
+      - install -Dm644 com.ganendr.potracker.desktop /app/share/applications/com.ganendr.potracker.desktop
+    sources:
+      - type: dir
+        path: src-tauri
+      - type: file
+        path: com.ganendr.potracker.desktop
