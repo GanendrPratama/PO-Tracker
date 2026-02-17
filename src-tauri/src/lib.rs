@@ -1107,11 +1107,13 @@ async fn add_form_questions(
     let mut current_index = 2; // Start after name and email
     for question in questions.iter() {
         // Use override if available, otherwise fallback to default formatting
-        let description = if let Some(desc) = question["description_override"].as_str() {
+        let base_description = if let Some(desc) = question["description_override"].as_str() {
             desc.to_string()
         } else {
             format!("Price: ${:.2}", question["price"].as_f64().unwrap_or(0.0))
         };
+        // Append numbers-only hint to the description
+        let description = format!("{}\n⚠️ Enter numbers only (e.g. 0, 1, 2, 3). Enter 0 if you don't want this item.", base_description);
 
         // If product has an image URL, add an image item first
         if let Some(image_url) = question["image_url"].as_str() {

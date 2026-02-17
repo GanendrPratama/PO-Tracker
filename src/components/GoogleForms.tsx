@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useGoogleAuthContext } from '../contexts/GoogleAuthContext';
-import { useGoogleForms, useProducts, useEvents } from '../hooks/useDatabase';
+import { useProductsContext } from '../contexts/ProductsContext';
+import { useGoogleForms, useEvents } from '../hooks/useDatabase';
 import { useSync } from '../hooks/useSync';
 import { FormEditor } from './FormEditor';
 import { Product } from '../types';
@@ -20,22 +21,11 @@ interface ScannedProject {
     products_json?: string;
 }
 
-interface ScannedProject {
-    folder_id: string;
-    name: string;
-    form?: {
-        form_id: string;
-        name: string;
-        url: string;
-        responder_url: string;
-    };
-    products_json?: string;
-}
 
 export function GoogleForms() {
     const { auth, isAuthenticated, isConfigured, startAuth, signOut, getAccessToken, loading: authLoading } = useGoogleAuthContext();
     const { forms, saveForm, deleteForm, loading: formsLoading } = useGoogleForms();
-    const { products, addProduct } = useProducts();
+    const { products, addProduct } = useProductsContext();
     const { events } = useEvents();
     // smtpSettings moved to useSync
 
@@ -552,6 +542,7 @@ export function GoogleForms() {
                                 <thead>
                                     <tr>
                                         <th>Title</th>
+                                        <th>Status</th>
                                         <th>Created</th>
                                         <th>Last Synced</th>
                                         <th>Actions</th>
@@ -561,6 +552,45 @@ export function GoogleForms() {
                                     {forms.map((form) => (
                                         <tr key={form.id}>
                                             <td style={{ fontWeight: 500 }}>{form.title}</td>
+                                            <td>
+                                                {form.last_synced_at ? (
+                                                    <span style={{
+                                                        display: 'inline-flex',
+                                                        alignItems: 'center',
+                                                        gap: '6px',
+                                                        padding: '2px 10px',
+                                                        borderRadius: 'var(--radius-full)',
+                                                        background: 'rgba(34, 197, 94, 0.1)',
+                                                        color: 'var(--color-success)',
+                                                        fontSize: 'var(--text-xs)',
+                                                        fontWeight: 500
+                                                    }}>
+                                                        <span style={{
+                                                            width: '6px', height: '6px', borderRadius: '50%',
+                                                            background: 'var(--color-success)', display: 'inline-block'
+                                                        }} />
+                                                        Linked
+                                                    </span>
+                                                ) : (
+                                                    <span style={{
+                                                        display: 'inline-flex',
+                                                        alignItems: 'center',
+                                                        gap: '6px',
+                                                        padding: '2px 10px',
+                                                        borderRadius: 'var(--radius-full)',
+                                                        background: 'rgba(245, 158, 11, 0.1)',
+                                                        color: 'var(--color-warning)',
+                                                        fontSize: 'var(--text-xs)',
+                                                        fontWeight: 500
+                                                    }}>
+                                                        <span style={{
+                                                            width: '6px', height: '6px', borderRadius: '50%',
+                                                            background: 'var(--color-warning)', display: 'inline-block'
+                                                        }} />
+                                                        Not Synced
+                                                    </span>
+                                                )}
+                                            </td>
                                             <td>{formatDate(form.created_at)}</td>
                                             <td>{formatDate(form.last_synced_at)}</td>
                                             <td>

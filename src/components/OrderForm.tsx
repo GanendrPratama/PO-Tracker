@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import QRCode from 'qrcode';
 import { invoke } from '@tauri-apps/api/core';
-import { useProducts, usePreOrders, useSmtpSettings, useCurrency, useInvoiceTemplate } from '../hooks/useDatabase';
+import { usePreOrders, useSmtpSettings, useCurrency, useInvoiceTemplate } from '../hooks/useDatabase';
+import { useProductsContext } from '../contexts/ProductsContext';
 import { useGoogleAuthContext } from '../contexts/GoogleAuthContext';
 import { Product, InvoiceSection } from '../types';
 
@@ -15,7 +16,7 @@ interface OrderFormProps {
 }
 
 export function OrderForm({ onOrderCreated }: OrderFormProps) {
-    const { products } = useProducts();
+    const { products } = useProductsContext();
     const { createOrder } = usePreOrders();
     const { settings: smtpSettings } = useSmtpSettings();
     const { auth, isAuthenticated, getAccessToken } = useGoogleAuthContext();
