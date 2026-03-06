@@ -18,6 +18,12 @@ export interface ProductPrice {
     price: number;
 }
 
+export interface Tag {
+    id?: number;
+    name: string;
+    color: string; // hex color for badge display
+}
+
 export interface Product {
     id?: number;
     unique_id?: string;
@@ -26,6 +32,7 @@ export interface Product {
     price: number;
     currency_code?: string;
     prices?: ProductPrice[];
+    tags?: Tag[];
     image_url?: string;
     event_id?: number;
     created_at?: string;
@@ -92,6 +99,7 @@ export interface AppSettings {
     camera_permission_granted?: boolean;
     currency_code?: string;   // e.g., 'USD', 'IDR'
     currency_locale?: string; // e.g., 'en-US', 'id-ID'
+    currency_set?: boolean;   // true if user has explicitly chosen a currency
 }
 
 // Google OAuth types

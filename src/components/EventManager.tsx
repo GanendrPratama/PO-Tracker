@@ -3,13 +3,22 @@ import { useEvents, useAppSettings } from '../hooks/useDatabase';
 import { Event } from '../types';
 import { CustomDatePicker } from './ui/DatePicker';
 
+// Locale lookup for currency codes
+const CURRENCY_LOCALE_MAP: Record<string, string> = {
+    'IDR': 'id-ID', 'SGD': 'en-SG', 'MYR': 'en-MY', 'THB': 'th-TH', 'VND': 'vi-VN', 'PHP': 'en-PH',
+    'INR': 'en-IN', 'CNY': 'zh-CN', 'KRW': 'ko-KR', 'HKD': 'en-HK', 'TWD': 'zh-TW', 'JPY': 'ja-JP',
+    'USD': 'en-US', 'CAD': 'en-CA', 'BRL': 'pt-BR', 'MXN': 'es-MX',
+    'EUR': 'de-DE', 'GBP': 'en-GB', 'CHF': 'de-CH', 'SEK': 'sv-SE', 'NOK': 'nb-NO',
+    'AUD': 'en-AU', 'NZD': 'en-NZ', 'ZAR': 'en-ZA', 'AED': 'en-AE', 'SAR': 'en-SA',
+};
+
 interface EventManagerProps {
     onEventsChanged?: () => void;
 }
 
 export function EventManager({ onEventsChanged }: EventManagerProps) {
     const { events, loading, addEvent, updateEvent, deleteEvent } = useEvents();
-    const { settings, setCurrentEvent } = useAppSettings();
+    const { settings, setCurrentEvent, setCurrency } = useAppSettings();
 
     const [showModal, setShowModal] = useState(false);
     const [editingEvent, setEditingEvent] = useState<Event | null>(null);
@@ -17,14 +26,15 @@ export function EventManager({ onEventsChanged }: EventManagerProps) {
         name: '',
         description: '',
         start_date: '',
-        end_date: ''
+        end_date: '',
+        currency_code: settings.currency_code || 'USD'
     });
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
     const [deleting, setDeleting] = useState<number | null>(null);
 
     const openCreateModal = () => {
         setEditingEvent(null);
-        setFormData({ name: '', description: '', start_date: '', end_date: '' });
+        setFormData({ name: '', description: '', start_date: '', end_date: '', currency_code: settings.currency_code || 'USD' });
         setShowModal(true);
     };
 
@@ -34,7 +44,8 @@ export function EventManager({ onEventsChanged }: EventManagerProps) {
             name: event.name,
             description: event.description || '',
             start_date: event.start_date || '',
-            end_date: event.end_date || ''
+            end_date: event.end_date || '',
+            currency_code: settings.currency_code || 'USD'
         });
         setShowModal(true);
     };
@@ -64,6 +75,12 @@ export function EventManager({ onEventsChanged }: EventManagerProps) {
             }
             setShowModal(false);
             onEventsChanged?.();
+
+            // Update app-wide currency if user changed it in the modal
+            if (formData.currency_code && formData.currency_code !== settings.currency_code) {
+                const locale = CURRENCY_LOCALE_MAP[formData.currency_code] || 'en-US';
+                await setCurrency(formData.currency_code, locale);
+            }
         } catch (error) {
             setMessage({ type: 'error', text: `Failed: ${error}` });
         }
@@ -282,6 +299,61 @@ export function EventManager({ onEventsChanged }: EventManagerProps) {
                                     })}
                                     placeholderText="Select end date"
                                 />
+                            </div>
+
+                            <div className="form-group" style={{ marginTop: 'var(--space-md)' }}>
+                                <label className="form-label">💰 Preferred Currency</label>
+                                <select
+                                    className="form-input"
+                                    value={formData.currency_code}
+                                    onChange={(e) => setFormData({ ...formData, currency_code: e.target.value })}
+                                    style={{
+                                        background: 'var(--color-bg-secondary)',
+                                        color: 'var(--color-text-primary)'
+                                    }}
+                                >
+                                    <optgroup label="Major Currencies">
+                                        <option value="USD">USD ($) - US Dollar</option>
+                                        <option value="EUR">EUR (€) - Euro</option>
+                                        <option value="GBP">GBP (£) - British Pound</option>
+                                        <option value="JPY">JPY (¥) - Japanese Yen</option>
+                                        <option value="AUD">AUD ($) - Australian Dollar</option>
+                                        <option value="CAD">CAD ($) - Canadian Dollar</option>
+                                        <option value="CHF">CHF (Fr) - Swiss Franc</option>
+                                        <option value="CNY">CNY (¥) - Chinese Yuan</option>
+                                        <option value="INR">INR (₹) - Indian Rupee</option>
+                                    </optgroup>
+                                    <optgroup label="Southeast Asia">
+                                        <option value="IDR">IDR (Rp) - Indonesian Rupiah</option>
+                                        <option value="SGD">SGD ($) - Singapore Dollar</option>
+                                        <option value="MYR">MYR (RM) - Malaysian Ringgit</option>
+                                        <option value="THB">THB (฿) - Thai Baht</option>
+                                        <option value="VND">VND (₫) - Vietnamese Dong</option>
+                                        <option value="PHP">PHP (₱) - Philippine Peso</option>
+                                    </optgroup>
+                                    <optgroup label="East Asia">
+                                        <option value="KRW">KRW (₩) - South Korean Won</option>
+                                        <option value="HKD">HKD ($) - Hong Kong Dollar</option>
+                                        <option value="TWD">TWD (NT$) - New Taiwan Dollar</option>
+                                    </optgroup>
+                                    <optgroup label="Americas">
+                                        <option value="BRL">BRL (R$) - Brazilian Real</option>
+                                        <option value="MXN">MXN ($) - Mexican Peso</option>
+                                    </optgroup>
+                                    <optgroup label="Europe">
+                                        <option value="SEK">SEK (kr) - Swedish Krona</option>
+                                        <option value="NOK">NOK (kr) - Norwegian Krone</option>
+                                    </optgroup>
+                                    <optgroup label="Others">
+                                        <option value="NZD">NZD ($) - New Zealand Dollar</option>
+                                        <option value="AED">AED (د.إ) - UAE Dirham</option>
+                                        <option value="SAR">SAR (﷼) - Saudi Riyal</option>
+                                        <option value="ZAR">ZAR (R) - South African Rand</option>
+                                    </optgroup>
+                                </select>
+                                <p style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', marginTop: 'var(--space-xs)' }}>
+                                    Changes your app-wide currency setting
+                                </p>
                             </div>
 
                             <div className="btn-group" style={{ justifyContent: 'flex-end', marginTop: 'var(--space-lg)' }}>

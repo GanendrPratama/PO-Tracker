@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import QRCode from 'qrcode';
 import { useGoogleAuthContext } from '../contexts/GoogleAuthContext';
-import { useGoogleForms, useProducts, useInvoiceTemplate, usePreOrders, useSmtpSettings } from './useDatabase';
+import { useGoogleForms, useInvoiceTemplate, usePreOrders, useSmtpSettings, useAppSettings } from './useDatabase';
+import { useProductsContext } from '../contexts/ProductsContext';
 
 interface FormResponse {
     responseId: string;
@@ -13,9 +14,10 @@ interface FormResponse {
 export function useSync() {
     const { auth, isAuthenticated, getAccessToken } = useGoogleAuthContext();
     const { forms, syncSettings, updateLastSynced, isResponseSynced, markResponseSynced, saveSyncSettings } = useGoogleForms();
-    const { products } = useProducts();
+    const { products } = useProductsContext();
     const { createOrder } = usePreOrders({ autoLoad: false });
     const { settings: smtpSettings } = useSmtpSettings();
+    const { settings: appSettings } = useAppSettings();
 
     const [syncing, setSyncing] = useState(false);
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -23,17 +25,24 @@ export function useSync() {
     // Microservice URL - can be configured via environment
     const SYNC_MICROSERVICE_URL = import.meta.env.VITE_SYNC_MICROSERVICE_URL || 'http://localhost:3001';
 
-    // Get Google Clieny Secret from environment variables (available at build time)
+    // Get Google Client Secret from environment variables (available at build time)
     const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
     const GOOGLE_CLIENT_SECRET = import.meta.env.VITE_GOOGLE_CLIENT_SECRET || '';
 
-
-
     const formatCurrency = (amount: number) => {
-        return new Intl.NumberFormat('en-US', {
-            style: 'currency',
-            currency: 'USD'
-        }).format(amount);
+        const code = appSettings.currency_code || 'USD';
+        const locale = appSettings.currency_locale || 'en-US';
+        try {
+            return new Intl.NumberFormat(locale, {
+                style: 'currency',
+                currency: code
+            }).format(amount);
+        } catch {
+            return new Intl.NumberFormat('en-US', {
+                style: 'currency',
+                currency: 'USD'
+            }).format(amount);
+        }
     };
 
     const { template } = useInvoiceTemplate();
@@ -150,9 +159,14 @@ export function useSync() {
         const accessToken = getAccessToken();
         if (!accessToken) return 0;
 
+        // Guard: products must be loaded for name matching to work
+        if (!products || products.length === 0) {
+            console.warn('Sync skipped: products not loaded yet. Will retry on next sync cycle.');
+            return 0;
+        }
+
         try {
             // Get known response IDs to filter
-            // TODO: implement proper response ID storage, for now just use empty
             const knownIds: string[] = [];
 
             // Call microservice to get new responses
@@ -219,7 +233,8 @@ export function useSync() {
                 for (const [questionId, answer] of Object.entries(answers)) {
                     if (productQuestionMap.has(questionId)) {
                         const productName = productQuestionMap.get(questionId);
-                        const product = products.find(p => p.name === productName);
+                        // Case-insensitive and trimmed matching for robustness
+                        const product = products.find(p => p.name.trim().toLowerCase() === productName?.trim().toLowerCase());
 
                         if (product) {
                             const quantityStr = answer.textAnswers?.answers[0]?.value || '0';
@@ -233,6 +248,8 @@ export function useSync() {
                                 });
                                 totalAmount += product.price * quantity;
                             }
+                        } else {
+                            console.warn(`Sync: Could not find product matching "${productName}" in local database. Available products: ${products.map(p => p.name).join(', ')}`);
                         }
                     }
                 }
@@ -404,7 +421,23 @@ export function useSync() {
         } finally {
             setSyncing(false);
         }
-    }, [auth, forms, syncing, template]); // products and other deps are stable refs (hopefully)
+    }, [auth, forms, syncing, template, products, appSettings]); // include products and appSettings for correct currency/matching
+
+    // Sync on startup — trigger once when app opens and forms are loaded
+    const initialSyncDone = useRef(false);
+    useEffect(() => {
+        if (initialSyncDone.current) return;
+        if (!isAuthenticated || forms.length === 0 || syncing) return;
+
+        initialSyncDone.current = true;
+        // Small delay to let everything initialize
+        const timeout = setTimeout(() => {
+            console.log('[Sync] Initial startup sync triggered...');
+            syncAllForms();
+        }, 2000);
+
+        return () => clearTimeout(timeout);
+    }, [isAuthenticated, forms, syncing, syncAllForms]);
 
     // Auto-sync effect
     useEffect(() => {

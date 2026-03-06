@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { Product } from '../types';
+import { useCurrency } from '../hooks/useDatabase';
 
 interface FormEditorProps {
     products: Product[];
@@ -11,13 +12,7 @@ export function FormEditor({ products, onSave, onCancel }: FormEditorProps) {
     const [orderedProducts, setOrderedProducts] = useState<Product[]>(products);
     const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
     const dragOverIndex = useRef<number | null>(null);
-
-    const formatCurrency = (amount: number) => {
-        return new Intl.NumberFormat('en-US', {
-            style: 'currency',
-            currency: 'USD'
-        }).format(amount);
-    };
+    const { formatCurrency } = useCurrency();
 
     const handleDragStart = (index: number) => {
         setDraggedIndex(index);

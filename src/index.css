@@ -927,28 +927,115 @@ body {
   }
 }
 
+/* Mobile Header - hidden on desktop */
+.mobile-header {
+  display: none;
+}
+
+.mobile-menu-toggle {
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  font-size: var(--text-xl);
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+}
+
+.mobile-menu-toggle:hover {
+  background: var(--color-bg-hover);
+  border-color: var(--color-border-active);
+}
+
+.mobile-menu-backdrop {
+  display: none;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .app {
     flex-direction: column;
   }
 
-  .sidebar {
-    width: 100%;
-    border-right: none;
+  /* Show mobile header */
+  .mobile-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-md) var(--space-lg);
+    background: var(--color-bg-secondary);
     border-bottom: 1px solid var(--color-border);
-    padding: var(--space-md);
+    position: sticky;
+    top: 0;
+    z-index: 50;
   }
 
+  .mobile-header .logo {
+    font-size: var(--text-base);
+  }
+
+  .mobile-header .logo-icon {
+    width: 28px;
+    height: 28px;
+    font-size: var(--text-sm);
+  }
+
+  /* Hide sidebar by default on mobile */
+  .sidebar {
+    display: none;
+    position: fixed;
+    top: 56px;
+    /* below mobile header */
+    left: 0;
+    right: 0;
+    width: 100%;
+    max-height: calc(100vh - 56px);
+    overflow-y: auto;
+    z-index: 40;
+    border-right: none;
+    border-bottom: 1px solid var(--color-border);
+    box-shadow: var(--shadow-lg);
+    animation: dropdownSlide var(--transition-normal) ease;
+  }
+
+  /* Show sidebar when mobile-open */
+  .sidebar.mobile-open {
+    display: flex;
+  }
+
+  /* Hide the sidebar header on mobile (logo is in mobile-header) */
+  .sidebar .sidebar-header {
+    display: none;
+  }
+
+  /* Backdrop - only rendered by React when menu is open */
+  .mobile-menu-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    top: 56px;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 35;
+  }
+
+  /* Nav items in dropdown - full column */
   .nav {
-    flex-direction: row;
-    overflow-x: auto;
-    gap: var(--space-sm);
+    flex-direction: column;
+    gap: var(--space-xs);
   }
 
   .nav-item {
-    flex-shrink: 0;
-    padding: var(--space-sm) var(--space-md);
+    padding: var(--space-md);
+  }
+
+  /* Version footer - hide on mobile dropdown */
+  .sidebar>div:last-child {
+    display: none;
   }
 
   .main-content {
@@ -965,6 +1052,18 @@ body {
 
   .product-grid {
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  }
+}
+
+@keyframes dropdownSlide {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 

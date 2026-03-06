@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { usePreOrders, useCurrency } from '../hooks/useDatabase';
 import { PreOrder, OrderItemDetail } from '../types';
 import { QRCodeSVG } from 'qrcode.react';
@@ -8,15 +8,61 @@ export function OrderList() {
     const { formatCurrency } = useCurrency();
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'confirmed' | 'sent'>('all');
+    const [notification, setNotification] = useState<string | null>(null);
 
     // Modal state
     const [selectedOrder, setSelectedOrder] = useState<PreOrder | null>(null);
     const [modalItems, setModalItems] = useState<OrderItemDetail[]>([]);
     const [modalItemsLoading, setModalItemsLoading] = useState(false);
 
+    // Track previous order count for new-order detection
+    const prevOrderCountRef = useRef<number | null>(null);
+
+    // Request browser notification permission on mount
+    useEffect(() => {
+        if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+    }, []);
+
+    // Initial load
     useEffect(() => {
         reload();
     }, [reload]);
+
+    // Auto-poll every 60 seconds
+    useEffect(() => {
+        const interval = setInterval(() => {
+            reload();
+        }, 60_000);
+        return () => clearInterval(interval);
+    }, [reload]);
+
+    // Detect new orders after each reload
+    useEffect(() => {
+        if (loading) return;
+
+        const currentCount = orders.length;
+
+        if (prevOrderCountRef.current !== null && currentCount > prevOrderCountRef.current) {
+            const newCount = currentCount - prevOrderCountRef.current;
+            const msg = `🔔 ${newCount} new order${newCount > 1 ? 's' : ''} received!`;
+
+            // In-app toast
+            setNotification(msg);
+            setTimeout(() => setNotification(null), 5000);
+
+            // System notification
+            if ('Notification' in window && Notification.permission === 'granted') {
+                new Notification('POTracker - New Order', {
+                    body: `${newCount} new order${newCount > 1 ? 's' : ''} received.`,
+                    icon: '📦'
+                });
+            }
+        }
+
+        prevOrderCountRef.current = currentCount;
+    }, [orders, loading]);
 
     const openModal = useCallback(async (order: PreOrder) => {
         setSelectedOrder(order);
@@ -347,6 +393,13 @@ export function OrderList() {
                             </div>
                         </div>
                     </div>
+                </div>
+            )}
+
+            {/* New order notification toast */}
+            {notification && (
+                <div className="toast success">
+                    {notification}
                 </div>
             )}
         </div>

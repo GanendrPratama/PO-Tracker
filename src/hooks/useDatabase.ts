@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import Database from '@tauri-apps/plugin-sql';
-import { Product, PreOrder, OrderItem, SmtpSettings, Event, AppSettings } from '../types';
+import { Product, PreOrder, OrderItem, SmtpSettings, Event, AppSettings, Tag } from '../types';
+import { runProductUpdater } from '../utils/productUpdater';
 
 let db: Database | null = null;
 
@@ -104,6 +105,11 @@ export async function getDatabase(): Promise<Database> {
             await db.execute('ALTER TABLE app_settings ADD COLUMN currency_locale TEXT DEFAULT "en-US"');
         } catch { /* Column might already exist */ }
 
+        // Add currency_set flag
+        try {
+            await db.execute('ALTER TABLE app_settings ADD COLUMN currency_set INTEGER DEFAULT 0');
+        } catch { /* Column might already exist */ }
+
         // Add is_active column for soft deletes (products)
         try {
             await db.execute('ALTER TABLE products ADD COLUMN is_active INTEGER DEFAULT 1');
@@ -130,14 +136,27 @@ export async function getDatabase(): Promise<Database> {
             await db.execute('ALTER TABLE products ADD COLUMN unique_id TEXT');
         } catch { /* Column might already exist */ }
 
-        // Backfill unique_ids for existing products that don't have one
-        try {
-            const productsWithoutUid = await db.select<{ id: number }[]>('SELECT id FROM products WHERE unique_id IS NULL');
-            for (const p of productsWithoutUid) {
-                const uid = 'PRD-' + Math.random().toString(36).substring(2, 10).toUpperCase();
-                await db.execute('UPDATE products SET unique_id = ? WHERE id = ?', [uid, p.id]);
-            }
-        } catch { /* Ignore backfill errors */ }
+        // Tags tables
+        await db.execute(`
+            CREATE TABLE IF NOT EXISTS tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                color TEXT NOT NULL DEFAULT '#6366f1'
+            )
+        `);
+
+        await db.execute(`
+            CREATE TABLE IF NOT EXISTS product_tags (
+                product_id INTEGER NOT NULL,
+                tag_id INTEGER NOT NULL,
+                PRIMARY KEY (product_id, tag_id),
+                FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+                FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+            )
+        `);
+
+        // Run product updater for data normalization
+        await runProductUpdater(db);
     }
     return db;
 }
@@ -695,7 +714,8 @@ export function useAppSettings() {
         current_event_id: undefined,
         camera_permission_granted: false,
         currency_code: 'USD',
-        currency_locale: 'en-US'
+        currency_locale: 'en-US',
+        currency_set: false
     });
     const [loading, setLoading] = useState(true);
 
@@ -711,7 +731,8 @@ export function useAppSettings() {
                     current_event_id: result[0].current_event_id || undefined,
                     camera_permission_granted: !!result[0].camera_permission_granted,
                     currency_code: result[0].currency_code || 'USD',
-                    currency_locale: result[0].currency_locale || 'en-US'
+                    currency_locale: result[0].currency_locale || 'en-US',
+                    currency_set: !!result[0].currency_set
                 });
             }
         } catch (error) {
@@ -750,7 +771,7 @@ export function useAppSettings() {
     const setCurrency = async (code: string, locale: string) => {
         const database = await getDatabase();
         await database.execute(
-            'UPDATE app_settings SET currency_code = ?, currency_locale = ? WHERE id = 1',
+            'UPDATE app_settings SET currency_code = ?, currency_locale = ?, currency_set = 1 WHERE id = 1',
             [code, locale]
         );
         await loadSettings();
@@ -887,4 +908,77 @@ export function useInvoiceTemplate() {
     };
 
     return { template, loading, saveTemplate, resetToDefault, reload: loadTemplate };
+}
+
+// Tags hooks
+export function useTags() {
+    const [tags, setTags] = useState<Tag[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    const loadTags = useCallback(async () => {
+        try {
+            const database = await getDatabase();
+            const result = await database.select<Tag[]>('SELECT * FROM tags ORDER BY name ASC');
+            setTags(result);
+        } catch (error) {
+            console.error('Failed to load tags:', error);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        loadTags();
+    }, [loadTags]);
+
+    const addTag = async (name: string, color: string) => {
+        const database = await getDatabase();
+        await database.execute(
+            'INSERT INTO tags (name, color) VALUES (?, ?)',
+            [name.trim(), color]
+        );
+        await loadTags();
+    };
+
+    const updateTag = async (id: number, name: string, color: string) => {
+        const database = await getDatabase();
+        await database.execute(
+            'UPDATE tags SET name = ?, color = ? WHERE id = ?',
+            [name.trim(), color, id]
+        );
+        await loadTags();
+    };
+
+    const deleteTag = async (id: number) => {
+        const database = await getDatabase();
+        await database.execute('DELETE FROM product_tags WHERE tag_id = ?', [id]);
+        await database.execute('DELETE FROM tags WHERE id = ?', [id]);
+        await loadTags();
+    };
+
+    const getProductTags = async (productId: number): Promise<Tag[]> => {
+        const database = await getDatabase();
+        return await database.select<Tag[]>(
+            `SELECT t.* FROM tags t
+             INNER JOIN product_tags pt ON t.id = pt.tag_id
+             WHERE pt.product_id = ?
+             ORDER BY t.name ASC`,
+            [productId]
+        );
+    };
+
+    const setProductTags = async (productId: number, tagIds: number[]) => {
+        const database = await getDatabase();
+        // Remove all existing tags for this product
+        await database.execute('DELETE FROM product_tags WHERE product_id = ?', [productId]);
+        // Add new tags
+        for (const tagId of tagIds) {
+            await database.execute(
+                'INSERT OR IGNORE INTO product_tags (product_id, tag_id) VALUES (?, ?)',
+                [productId, tagId]
+            );
+        }
+    };
+
+    return { tags, loading, addTag, updateTag, deleteTag, getProductTags, setProductTags, reload: loadTags };
 }
